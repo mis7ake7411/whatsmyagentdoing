@@ -11,11 +11,11 @@
       title: "What's my agent doing", office: 'Office', list: 'List', wentHome: 'went home', qMid: '2D', qHigh: '3D',
       loading3d: 'Loading 3D office…', loading2d: 'Setting up the office…', failed3d: "Couldn't load the 3D office — showing Medium instead.",
       all: 'All', subagents: 'Subagents', showIdle: 'Idle', notify: 'Notify when done', notifyOn: 'Notifications on', disconnected: 'Disconnected — retrying…',
-      needsYou: 'Needs you', working: 'Working', finished: 'Finished', idle: 'Idle',
-      thinking: 'Thinking', tool: 'Running', typing: 'Writing reply', waiting: 'Waiting for you', done: 'Done', interrupted: 'Interrupted', error: 'Error',
+      needsYou: 'Needs you', working: 'Working', finished: 'Completed turns', idle: 'Idle',
+      thinking: 'Thinking', tool: 'Running', typing: 'Writing reply', waiting: 'Waiting for you', done: 'Turn completed', interrupted: 'Interrupted', error: 'Error',
       copy: 'Copy resume cmd', copied: 'Copied ✓', sub: 'subagent', auto: 'Auto',
       empty: 'No Claude Code, Codex or Gemini CLI sessions in the time window. Start one and it shows up here.',
-      doneNote: (p) => `${p} is done`,
+      doneNote: (p) => `${p}: turn completed`,
     },
     'zh-TW': {
       newVersion: '新版本',
@@ -25,11 +25,11 @@
       title: '我的 Agent 在幹嘛', office: '辦公室', list: '列表', wentHome: '已下班', qMid: '2D', qHigh: '3D',
       loading3d: '正在載入 3D 辦公室…', loading2d: '正在佈置辦公室…', failed3d: '3D 辦公室載入失敗，先用中畫質顯示。',
       all: '全部', subagents: '子 agent', showIdle: '閒置', notify: '完成時通知我', notifyOn: '通知已開', disconnected: '連線中斷，重試中…',
-      needsYou: '需要你', working: '工作中', finished: '已完成', idle: '閒置',
-      thinking: '思考中', tool: '執行中', typing: '回覆中', waiting: '等你回應', done: '已完成', interrupted: '已中斷', error: '錯誤',
+      needsYou: '需要你', working: '工作中', finished: '回合已完成', idle: '閒置',
+      thinking: '思考中', tool: '執行中', typing: '回覆中', waiting: '等你回應', done: '本回合已完成', interrupted: '已中斷', error: '錯誤',
       copy: '複製接續指令', copied: '已複製 ✓', sub: '子 agent', auto: '自動',
       empty: '這段時間內沒有 Claude Code、Codex 或 Gemini CLI session。開一個就會出現在這裡。',
-      doneNote: (p) => `${p} 完成了`,
+      doneNote: (p) => `${p}：本回合已完成`,
     },
     'zh-CN': {
       newVersion: '新版本',
@@ -130,6 +130,29 @@
       doneNote: (p) => `${p} terminou`,
     },
   };
+
+  // Existing locales keep working; new evidence labels fall back to English.
+  const evidenceLabels = {
+    unknown: 'Status unknown', errors: 'Errors', observedStatus: 'Last observed status; not a live execution guarantee.',
+    logTimeUnknown: 'Log time unavailable', lastLog: (t) => `Last log event: ${t} ago`,
+    staleLog: (t) => `No new log events for ${t}; current state unconfirmed.`,
+    staleMeaning: 'This does not mean the task has stopped or made no progress.',
+    staleCount: (n) => `${n} sessions have outdated activity information.`,
+    pendingCount: (n) => `Needs your response (${n})`,
+    unknownOffice: 'Not shown as resting agents; see List for details.',
+  };
+  for (const labels of Object.values(S)) {
+    for (const [key, value] of Object.entries(evidenceLabels)) labels[key] = value;
+  }
+  Object.assign(S['zh-TW'], {
+    unknown: '狀態未知', errors: '錯誤', observedStatus: '顯示最後觀察到的狀態，不保證目前仍在執行。',
+    logTimeUnknown: '日誌時間未知', lastLog: (t) => `最後日誌：${t} 前`,
+    staleLog: (t) => `已 ${t} 無新日誌，目前狀態待確認。`,
+    staleMeaning: '這不代表任務停止或沒有實質進展。',
+    staleCount: (n) => `${n} 個對話的活動資訊已過期。`,
+    pendingCount: (n) => `需要你回應（${n} 項）`,
+    unknownOffice: '不顯示為休息人物；詳情見列表。',
+  });
 
   // Map a browser locale like "zh-HK" or "pt-BR" to one we have.
   function fromBrowser(list) {

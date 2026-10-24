@@ -86,6 +86,36 @@ No hooks, no config, no API keys. Both tools already append every message and to
 
 ## Limits
 
+### Personal fork: evidence-based status
+
+This fork keeps the office and list views but shows the last observed state,
+not a guarantee that a process is still running. Silence never changes a reply
+to Done or an active session to Idle. After ten minutes without a new log event,
+nonterminal sessions are marked as having outdated information; this does not
+prove that the task has stopped or made no progress. **Turn completed** means
+the recorded turn ended, not that the overall task passed acceptance checks.
+
+Unanswered questions and approval requests are tracked separately from tool
+activity. The list can show a running tool and a pending question together;
+the office uses its existing waiting animation. Related answers, cancellations,
+or explicit invalidation clear the corresponding requests, while unrelated
+events do not. Async questions remain pending across completed turns until
+answered or explicitly invalidated. Unknown sessions appear in their own list group instead of as
+resting office characters. Explicit subagent metadata is required: a desktop
+or IDE session source alone is not evidence of a subagent.
+
+These improvements still depend on the log events available from each agent.
+Unlogged approvals, missing identifiers, or incompatible log formats may remain
+unconfirmed. They do not interrupt or control agent tasks.
+
+Regression checks use the existing Node runtime and its built-in test runner:
+
+```sh
+node --test tests/status.test.js tests/status-ui.test.js
+```
+
+### Shared limitations
+
 - Logs are written per finished block, not per token, so "Writing reply" means a reply block has landed and the turn isn't over — not a live keystroke stream.
 - Claude Code doesn't log permission prompts, so a tool waiting on your approval shows as "Running" until you answer (Codex and Gemini CLI do log it, so those show "Waiting for you").
 - Gemini CLI writes its thoughts together with the reply, so between your prompt and its first tool call or reply it simply shows "Thinking".

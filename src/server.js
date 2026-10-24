@@ -30,17 +30,23 @@ function serveFile(res, root, rel) {
   fs.createReadStream(file).pipe(res);
 }
 const ACTIVE = new Set(['thinking', 'tool', 'typing']);
+const STALE_AFTER_MS = 600_000;
 
-// Logs only record finished blocks, so a few states need a clock to resolve:
-// a reply with no follow-up is a finished turn, and an "active" session that
-// has gone silent for a long time was most likely closed mid-turn.
+// Keep the last observed status and report silence separately as freshness.
 function view(s, now, { privacy }) {
-  const quiet = now - (s.lastEventAt || s.mtime || now);
-  let status = s.status;
-  if (status === 'typing' && quiet > 45_000) status = 'done';
-  if (status === 'thinking' && quiet > 15 * 60_000) status = 'idle';
-  if (status === 'tool' && quiet > 45 * 60_000) status = 'idle';
-  if ((status === 'waiting' || status === 'error') && quiet > 2 * 3600_000) status = 'idle';
+  const lastEventAt = s.lastEventAt ?? s.mtime ?? null;
+  const quietMs = Number.isFinite(lastEventAt) ? Math.max(0, now - lastEventAt) : null;
+  const status = s.status;
+  const requests = Array.isArray(s.pendingRequests) ? s.pendingRequests : [];
+  const pending = requests.map((request) => ({
+    id: request.id,
+    kind: request.kind,
+    summary: privacy
+      ? (request.kind === 'approval' ? 'Approval requested' : 'Question requested')
+      : (request.summary || (request.kind === 'approval' ? 'Approval requested' : 'Question requested')),
+  }));
+  const stale = quietMs !== null && quietMs >= STALE_AFTER_MS
+    && ['thinking', 'tool', 'typing', 'waiting', 'unknown'].includes(status);
 
   const out = {
     key: `${s.agent}:${s.id}`,
@@ -54,12 +60,17 @@ function view(s, now, { privacy }) {
     title: s.title,
     model: s.model,
     status,
+    pendingRequests: pending,
+    needsInput: pending.length > 0 || status === 'waiting',
+    quietMs,
+    stale,
+    staleAfterMs: STALE_AFTER_MS,
     activity: status === 'tool' || status === 'waiting' ? s.activity : null,
     prompt: s.prompt,
     reply: s.reply,
     error: s.error,
     turnStartedAt: s.turnStartedAt,
-    lastEventAt: s.lastEventAt || s.mtime,
+    lastEventAt,
     startedAt: s.startedAt,
   };
   if (privacy) {

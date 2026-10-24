@@ -89,6 +89,14 @@
   .status { display: flex; align-items: center; gap: 8px; color: var(--s); font-weight: 600; font-size: 13px; min-width: 0; }
   .status .lbl { white-space: nowrap; flex: none; }
   .status .act { flex: 1 1 auto; color: var(--ink); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .evidence { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .evidence p { margin: 3px 0; }
+  .evidence .stale { color: var(--waiting); }
+  .pending { border-left: 3px solid var(--waiting); padding-left: 9px; font-size: 12.5px; overflow-wrap: anywhere; }
+  .pending strong { color: var(--waiting); }
+  .pending ul { margin: 4px 0 0; padding-left: 18px; }
+  .office-signals { color: var(--muted); font-size: 12px; margin-bottom: 12px; overflow-wrap: anywhere; }
+  .office-signals span { display: inline-block; margin: 0 12px 4px 0; }
   .q, .r { font-size: 12.5px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
   .q::before { content: "› "; color: var(--faint); }
   .r { color: var(--ink); opacity: .85; }
@@ -107,6 +115,7 @@
   [data-s="interrupted"] { --s: var(--idle); }
   [data-s="error"] { --s: var(--error); }
   [data-s="idle"] { --s: var(--idle); }
+  [data-s="unknown"] { --s: var(--muted); }
 
   .ind { width: 18px; height: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 2px; flex: none; }
   .ind i { width: 4px; height: 4px; border-radius: 50%; background: var(--s); display: none; }
@@ -182,6 +191,7 @@
       <select class="btn" id="langSel" aria-label="Language"></select>
     </div>
   </header>
+  <aside id="officeSignals" class="office-signals" aria-live="polite"></aside>
   <div id="officeWrap">
     <div class="office loading" id="office"><div class="office-loader"><div class="spin"></div><span id="loaderText"></span></div></div>
     <div class="legend" id="legend"></div>
@@ -253,11 +263,21 @@ const state = {
 
 const ACTIVE = new Set(['thinking', 'tool', 'typing']);
 const AGENT_NAME = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' };
+const needsInput = (s) => s.needsInput || s.status === 'waiting' || (s.pendingRequests || []).length > 0;
+function groupOf(s) {
+  if (needsInput(s)) return 'needsYou';
+  if (s.status === 'error') return 'errors';
+  if (ACTIVE.has(s.status)) return 'working';
+  if (s.status === 'done' || s.status === 'interrupted') return 'finished';
+  return s.status === 'idle' ? 'idle' : 'unknown';
+}
 const GROUPS = [
-  { key: 'needsYou', match: (s) => s === 'waiting' || s === 'error' },
-  { key: 'working', match: (s) => ACTIVE.has(s) },
-  { key: 'finished', match: (s) => s === 'done' || s === 'interrupted' },
-  { key: 'idle', match: (s) => s === 'idle' },
+  { key: 'needsYou', color: 'waiting' },
+  { key: 'working', color: 'tool' },
+  { key: 'finished', color: 'done' },
+  { key: 'errors', color: 'error' },
+  { key: 'unknown', color: 'muted' },
+  { key: 'idle', color: 'idle' },
 ];
 
 function esc(s) {
@@ -288,6 +308,27 @@ function timeLabel(s, now) {
   return s.lastEventAt ? ago(s.lastEventAt, now) : '';
 }
 
+function freshness(s, now) {
+  const hasTime = Number.isFinite(s.lastEventAt) && s.lastEventAt > 0;
+  const quiet = hasTime ? Math.max(0, now - s.lastEventAt) : null;
+  const terminal = ['done', 'interrupted', 'error', 'idle'].includes(s.status);
+  return { quiet, stale: !terminal && quiet !== null && quiet >= (s.staleAfterMs || 600000) };
+}
+
+function evidence(s, now) {
+  const info = freshness(s, now);
+  const logTime = info.quiet === null ? L.logTimeUnknown : L.lastLog(dur(info.quiet));
+  const stale = info.stale ? `<p class="stale">${esc(L.staleLog(dur(info.quiet)))} ${esc(L.staleMeaning)}</p>` : '';
+  return `<div class="evidence"><p>${esc(logTime)}</p>${stale}</div>`;
+}
+
+function pending(s) {
+  if (!needsInput(s)) return '';
+  const requests = s.pendingRequests || [];
+  const items = requests.filter((r) => r.summary).map((r) => `<li>${esc(r.summary)}</li>`).join('');
+  return `<div class="pending"><strong>${esc(L.pendingCount(requests.length || 1))}</strong>${items ? `<ul>${items}</ul>` : ''}</div>`;
+}
+
 // Single-quote for POSIX shells: inside '…' nothing ($(), backticks, $VAR)
 // is expanded, so a folder or session name can't run anything when pasted.
 const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
@@ -315,8 +356,8 @@ function card(s, now) {
       <span class="time" data-time="${esc(s.key)}">${esc(timeLabel(s, now))}</span>
     </div>
     ${title}
-    <div class="status"><span class="ind"><i></i><i></i><i></i></span><span class="lbl">${esc(L[s.status] || s.status)}</span>${act}</div>
-    ${err}${q}${r}
+    <div class="status" title="${esc(L.observedStatus)}"><span class="ind"><i></i><i></i><i></i></span><span class="lbl">${esc(L[s.status] || L.unknown)}</span>${act}</div>
+    ${pending(s)}${evidence(s, now)}${err}${q}${r}
     <div class="foot"><span class="model">${esc((s.model || '') + sub)}</span><button class="copy" data-copy="${esc(resumeCmd(s))}">${L.copy}</button></div>
   </div>`;
 }
@@ -325,7 +366,7 @@ function visible() {
   return state.data.sessions.filter((s) =>
     (state.agent === 'all' || s.agent === state.agent) &&
     (state.showSub || !s.subagent) &&
-    (state.showIdle || s.status !== 'idle'));
+    (state.showIdle || s.status !== 'idle' || needsInput(s)));
 }
 
 function render() {
@@ -333,22 +374,31 @@ function render() {
   const list = visible();
   const all = state.data.sessions.filter((s) => (state.agent === 'all' || s.agent === state.agent) && (state.showSub || !s.subagent));
 
-  const count = (f) => all.filter((s) => f(s.status)).length;
-  document.getElementById('summary').innerHTML = GROUPS.slice(0, 3).map((g) => {
-    const n = count(g.match);
-    const color = g.key === 'needsYou' ? 'var(--waiting)' : g.key === 'working' ? 'var(--tool)' : 'var(--done)';
+  const count = (key) => all.filter((s) => groupOf(s) === key).length;
+  document.getElementById('summary').innerHTML = GROUPS.filter((g, i) => i < 3 || (g.key !== 'idle' && count(g.key))).map((g) => {
+    const n = count(g.key);
+    const color = `var(--${g.color})`;
     return `<span class="chip"><span class="dot" style="color:${color}"></span>${L[g.key]} <b>${n}</b></span>`;
   }).join('');
 
-  const working = count((s) => ACTIVE.has(s));
-  const needs = count(GROUPS[0].match);
+  const working = count('working');
+  const needs = count('needsYou');
   document.title = (needs ? `(${needs}!) ` : working ? `(${working}) ` : '') + L.title;
 
   const main = document.getElementById('main');
   const officeMode = state.view === 'office';
   document.getElementById('officeWrap').style.display = officeMode ? '' : 'none';
   // The office decides who sits at a desk and who wanders around.
-  const officeList = all;
+  // Unknown is not a resting agent. Keep it in the evidence summary/List;
+  // pending input uses the existing waving animation without overwriting data.
+  const officeList = all.filter((s) => s.status !== 'unknown' || needsInput(s))
+    .map((s) => needsInput(s) ? { ...s, status: 'waiting' } : s);
+  const staleCount = all.filter((s) => freshness(s, now).stale).length;
+  document.getElementById('officeSignals').innerHTML = officeMode ? [
+    `<span>${esc(L.observedStatus)}</span>`,
+    staleCount ? `<span>${esc(L.staleCount(staleCount))} ${esc(L.staleMeaning)}</span>` : '',
+    count('unknown') ? `<span>${esc(L.unknown)}: ${count('unknown')} · ${esc(L.unknownOffice)}</span>` : '',
+  ].join('') : '';
   // Wait for the first snapshot so people start at their places instead of
   // all walking in through the door.
   if (office && state.loaded) {
@@ -357,8 +407,8 @@ function render() {
   }
   document.getElementById('idleToggle').style.display = officeMode ? 'none' : '';
   if (officeMode) {
-    main.innerHTML = officeList.length ? '' : `<div class="empty">${esc(L.empty)}</div>`;
-    document.getElementById('officeWrap').style.display = officeList.length ? '' : 'none';
+    main.innerHTML = all.length ? '' : `<div class="empty">${esc(L.empty)}</div>`;
+    document.getElementById('officeWrap').style.display = all.length ? '' : 'none';
     refreshTip();
     return;
   }
@@ -367,7 +417,7 @@ function render() {
     return;
   }
   main.innerHTML = GROUPS.map((g) => {
-    const items = list.filter((s) => g.match(s.status));
+    const items = list.filter((s) => groupOf(s) === g.key);
     if (!items.length) return '';
     return `<section><h2>${L[g.key]} <span class="n">${items.length}</span></h2><div class="grid">${items.map((s) => card(s, now)).join('')}</div></section>`;
   }).join('');
@@ -389,13 +439,16 @@ function onData(data) {
   state.flash.clear();
   for (const s of data.sessions) {
     const before = state.prev.get(s.key);
-    if (!first && before && ACTIVE.has(before) && (s.status === 'done' || s.status === 'waiting')) {
+    const pendingIds = (s.pendingRequests || []).map((r) => r.id);
+    const newlyNeeds = needsInput(s) && (!before?.needsInput || pendingIds.some((id) => !before.pendingIds.includes(id)));
+    const newlyDone = s.status === 'done' && before && before.status !== 'done';
+    if (!first && before && (newlyDone || newlyNeeds)) {
       state.flash.add(s.key);
       if (!s.subagent && window.Notification && Notification.permission === 'granted') {
-        try { new Notification(s.status === 'done' ? L.doneNote(s.project || s.agent) : `${s.project || s.agent}: ${L.waiting}`, { body: s.reply || s.activity || '', tag: s.key }); } catch {}
+        try { new Notification(newlyNeeds ? `${s.project || s.agent}: ${L.waiting}` : L.doneNote(s.project || s.agent), { body: newlyNeeds ? (s.pendingRequests || []).map((r) => r.summary).filter(Boolean).join('\n') : s.reply || '', tag: s.key }); } catch {}
       }
     }
-    state.prev.set(s.key, s.status);
+    state.prev.set(s.key, { status: s.status, needsInput: needsInput(s), pendingIds });
   }
   state.data = data;
   state.loaded = true;

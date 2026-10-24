@@ -26,8 +26,9 @@ function newSession(agent, id, file) {
     model: null,
     subagent: false,
     parentId: null,
-    status: 'idle',
+    status: 'unknown',
     activity: null,
+    pendingRequests: [],
     prompt: null,
     reply: null,
     error: null,
@@ -79,6 +80,39 @@ function set(s, status, activity) {
   if (status !== 'error') s.error = null;
 }
 
+function pendingRequests(s) {
+  if (!Array.isArray(s.pendingRequests)) s.pendingRequests = [];
+  return s.pendingRequests;
+}
+
+function addPendingRequest(s, id, kind, summary, details = {}) {
+  if (id == null || id === '') return null;
+  const key = String(id);
+  const list = pendingRequests(s);
+  let item = list.find((request) => request.id === key);
+  if (!item) {
+    item = { id: key, kind, summary };
+    list.push(item);
+  } else {
+    item.kind = kind;
+    item.summary = summary;
+  }
+  if (Object.hasOwn(details, 'async')) item.async = details.async;
+  return item;
+}
+
+function removePendingRequest(s, id) {
+  if (id == null || !Array.isArray(s.pendingRequests)) return;
+  const key = String(id);
+  const previousLength = s.pendingRequests.length;
+  s.pendingRequests = s.pendingRequests.filter((request) => request.id !== key);
+  return s.pendingRequests.length !== previousLength;
+}
+
+function clearPendingRequests(s, { preserveAsync = false } = {}) {
+  s.pendingRequests = preserveAsync ? pendingRequests(s).filter((request) => request.async) : [];
+}
+
 // ---------------------------------------------------------------- Claude Code
 
 function describeClaudeTool(name, input = {}) {
@@ -127,8 +161,10 @@ function applyClaude(s, d) {
       if (!s.title && d.agentName) s.title = d.agentName;
       return;
     case 'system':
-      if (d.subtype === 'stop_hook_summary') set(s, 'done', null);
-      else if (d.subtype === 'api_error') {
+      if (d.subtype === 'stop_hook_summary') {
+        clearPendingRequests(s);
+        set(s, 'done', null);
+      } else if (d.subtype === 'api_error') {
         set(s, 'error', null);
         s.error = short(d.error?.formatted || d.error?.message || 'API error', 120);
       }
@@ -138,6 +174,11 @@ function applyClaude(s, d) {
       const c = d.message?.content;
       if (Array.isArray(c) && c.some((x) => x.type === 'tool_result')) {
         // Tool finished (or you answered its question); model reads the result.
+        for (const result of c) {
+          if (result.type === 'tool_result' && result.tool_use_id != null) {
+            removePendingRequest(s, result.tool_use_id);
+          }
+        }
         set(s, 'thinking');
         return;
       }
@@ -145,7 +186,11 @@ function applyClaude(s, d) {
         ? c
         : Array.isArray(c) ? c.filter((x) => x.type === 'text').map((x) => x.text).join('\n') : '';
       if (!text) return;
-      if (text.startsWith('[Request interrupted')) { set(s, 'interrupted', null); return; }
+      if (text.startsWith('[Request interrupted')) {
+        clearPendingRequests(s);
+        set(s, 'interrupted', null);
+        return;
+      }
       if (text.includes('<local-command-stdout>') || text.includes('<local-command-caveat>')) return;
       const cmd = text.match(/<command-name>([^<]+)<\/command-name>/);
       const isNotification = text.trimStart().startsWith('<task-notification>');
@@ -166,9 +211,22 @@ function applyClaude(s, d) {
         if (b.type === 'thinking' || b.type === 'redacted_thinking') set(s, 'thinking');
         else if (b.type === 'text') {
           s.reply = clean(b.text) || s.reply;
-          set(s, m.stop_reason === 'end_turn' || m.stop_reason === 'stop_sequence' ? 'done' : 'typing', null);
+          const done = m.stop_reason === 'end_turn' || m.stop_reason === 'stop_sequence';
+          if (done) clearPendingRequests(s);
+          set(s, done ? 'done' : 'typing', null);
         } else if (b.type === 'tool_use') {
-          set(s, WAITING_TOOLS.has(b.name) ? 'waiting' : 'tool', describeClaudeTool(b.name, b.input));
+          const toolName = String(b.name || '').split('__').pop();
+          const waiting = WAITING_TOOLS.has(toolName);
+          if (waiting) {
+            const kind = toolName === 'AskUserQuestion' ? 'question' : 'approval';
+            const question = b.input?.question || b.input?.questions?.[0]?.question;
+            const summary = typeof question === 'string' && question.trim()
+              ? clean(question, 140)
+              : clean(describeClaudeTool(b.name, b.input), 140);
+            const id = b.id ?? b.tool_use_id ?? `unmatched:${s.id}:${toolName}:${ts ?? 'no-time'}:${pendingRequests(s).length}`;
+            addPendingRequest(s, id, kind, summary || `${kind === 'approval' ? 'Approval' : 'Question'} requested`);
+          }
+          set(s, waiting ? 'waiting' : 'tool', describeClaudeTool(b.name, b.input));
         }
       }
       if (d.isApiErrorMessage) {
@@ -209,6 +267,104 @@ function describeCodexCall(name, raw) {
   return name;
 }
 
+function codexRequestName(name, raw) {
+  const normalize = (value) => String(value || '').split('.').pop().split('__').pop();
+  let tool = normalize(name);
+  if (tool === 'exec') {
+    let code = typeof raw === 'string' ? raw : '';
+    if (raw && typeof raw === 'object') {
+      code = [raw.code, raw.command, raw.cmd, raw.input].find((value) => typeof value === 'string') || '';
+    }
+    const calls = /\btools\.([A-Za-z0-9_$]+(?:(?:\.|__)[A-Za-z0-9_$]+)*)\s*\(/g;
+    let match;
+    while ((match = calls.exec(code)) !== null) {
+      const candidate = normalize(match[1]);
+      if (candidate === 'request_user_input' || candidate === 'request_user_input_async') return candidate;
+    }
+  }
+  return tool === 'request_user_input' || tool === 'request_user_input_async' ? tool : null;
+}
+
+function codexArguments(raw) {
+  if (raw && typeof raw === 'object') return raw;
+  if (typeof raw === 'string') {
+    try {
+      const value = JSON.parse(raw);
+      if (value && typeof value === 'object') return value;
+    } catch { /* exec wrappers are inspected as text below */ }
+  }
+  return {};
+}
+
+function codexRequestId(payload, fallback) {
+  const questionId = payload.questionItemId == null ? null : questionReplyId(payload.questionItemId);
+  const value = payload.call_id ?? payload.callId ?? payload.approval_id ?? payload.approvalId
+    ?? payload.request_id ?? payload.requestId ?? payload.item_id ?? payload.itemId ?? questionId ?? payload.id ?? payload.item?.id;
+  return value == null || value === '' ? fallback : String(value);
+}
+
+function codexRequestSummary(kind, raw, payload = {}) {
+  const args = codexArguments(raw);
+  const question = Array.isArray(args.questions) ? args.questions[0]?.question : null;
+  const title = Array.isArray(args.questions) ? args.questions[0]?.title : null;
+  const candidates = kind === 'question'
+    ? [payload.question, payload.prompt, payload.questions?.[0]?.title, payload.questions?.[0]?.question,
+      title, question, args.question, args.prompt, args.title]
+    : [payload.command, payload.cmd, payload.reason, args.command, args.cmd, args.reason];
+  const summary = candidates.find((value) => typeof value === 'string' && value.trim());
+  if (summary) return clean(summary, 140);
+  if (typeof raw === 'string') {
+    const match = raw.match(/(?:question|prompt)\s*:\s*["']([^"']+)["']/i);
+    if (kind === 'question' && match) return clean(match[1], 140);
+  }
+  return kind === 'approval' ? 'Approval requested' : 'Question requested';
+}
+
+function questionReplyId(value) {
+  if (Array.isArray(value)) return value.length > 1 ? String(value[1]) : null;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.length > 1 ? String(parsed[1]) : null;
+    if (parsed && typeof parsed === 'object') return parsed.call_id || parsed.id || null;
+  } catch { /* keep an opaque identifier unmatched rather than guessing */ }
+  return value;
+}
+
+function resolveCodexQuestionReplies(s, message) {
+  const match = String(message || '').match(/<send_user_message_question_reply>([\s\S]*?)<\/send_user_message_question_reply>/);
+  if (!match) return;
+  let replies;
+  try { replies = JSON.parse(match[1]); } catch { return; }
+  if (!Array.isArray(replies)) return;
+  let resolved = false;
+  for (const reply of replies) {
+    if (!reply || typeof reply !== 'object' || reply.answer == null || String(reply.answer).trim() === '') continue;
+    const id = questionReplyId(reply.questionItemId);
+    if (id != null && removePendingRequest(s, id)) resolved = true;
+  }
+  return resolved;
+}
+
+function hasAnsweredOutput(output) {
+  if (output == null) return false;
+  if (typeof output === 'string') {
+    const text = output.trim();
+    if (!text || /^accepted$/i.test(text)) return false;
+    try {
+      return hasAnsweredOutput(JSON.parse(text));
+    } catch { /* a nonempty textual answer is sufficient */ }
+    return true;
+  }
+  if (Array.isArray(output)) return output.some(hasAnsweredOutput);
+  if (typeof output === 'object') {
+    if (output.status === 'accepted' || output.accepted === true) return false;
+    if (Object.hasOwn(output, 'answer')) return hasAnsweredOutput(output.answer);
+    return Object.keys(output).length > 0;
+  }
+  return Boolean(output);
+}
+
 function applyCodex(s, d) {
   const ts = stamp(s, d.timestamp);
   const p = d.payload || {};
@@ -216,9 +372,21 @@ function applyCodex(s, d) {
   switch (d.type) {
     case 'session_meta':
       if (p.cwd) s.cwd = p.cwd;
-      if (p.source && typeof p.source === 'object' && p.source.subagent) s.subagent = true;
+      if (p.source && typeof p.source === 'object' && p.source.subagent) {
+        s.subagent = true;
+        const subagent = typeof p.source.subagent === 'object' ? p.source.subagent : {};
+        const parent = subagent.parent_thread_id ?? subagent.parentThreadId
+          ?? subagent.thread_spawn?.parent_thread_id ?? subagent.thread_spawn?.parentThreadId;
+        if (parent) s.parentId = parent;
+      }
       if (p.parent_thread_id) { s.parentId = p.parent_thread_id; s.subagent = true; }
-      if (p.thread_source && p.thread_source !== 'user') s.subagent = true;
+      if (p.thread_source && typeof p.thread_source === 'object') {
+        if (p.thread_source.subagent === true || p.thread_source.kind === 'subagent') s.subagent = true;
+        if (p.thread_source.parent_thread_id) {
+          s.parentId = p.thread_source.parent_thread_id;
+          s.subagent = true;
+        }
+      }
       return;
     case 'turn_context':
       if (p.model) s.model = p.model;
@@ -227,15 +395,18 @@ function applyCodex(s, d) {
     case 'event_msg':
       switch (p.type) {
         case 'task_started':
+          clearPendingRequests(s, { preserveAsync: true });
           s.turnStartedAt = ts;
           s.reply = null;
           set(s, 'thinking', null);
           return;
         case 'task_complete':
+          clearPendingRequests(s, { preserveAsync: true });
           if (p.last_agent_message) s.reply = clean(p.last_agent_message);
           set(s, 'done', null);
           return;
         case 'turn_aborted':
+          clearPendingRequests(s);
           set(s, 'interrupted', null);
           return;
         case 'error':
@@ -243,7 +414,8 @@ function applyCodex(s, d) {
           s.error = short(p.message || 'Error', 120);
           return;
         case 'user_message':
-          s.prompt = clean(p.message);
+          resolveCodexQuestionReplies(s, typeof p.message === 'string' ? p.message : codexText(p.message));
+          s.prompt = clean(typeof p.message === 'string' ? p.message : codexText(p.message));
           set(s, 'thinking', null);
           return;
         case 'agent_message':
@@ -253,8 +425,17 @@ function applyCodex(s, d) {
         case 'exec_approval_request':
         case 'apply_patch_approval_request':
         case 'request_user_input':
-          set(s, 'waiting', 'Needs your approval');
+        case 'request_user_input_async': {
+          const question = p.type === 'request_user_input' || p.type === 'request_user_input_async';
+          const kind = question ? 'question' : 'approval';
+          const raw = p.arguments ?? p.input ?? p.action ?? p;
+          const id = codexRequestId(p, `unmatched:${s.id}:${p.type}:${ts ?? 'no-time'}:${pendingRequests(s).length}`);
+          addPendingRequest(s, id, kind, codexRequestSummary(kind, raw, p), {
+            async: p.type === 'request_user_input_async',
+          });
+          set(s, 'waiting', question ? 'Asking you a question' : 'Needs your approval');
           return;
+        }
         case 'item_started':
         case 'item_completed': {
           const it = p.item || {};
@@ -301,15 +482,32 @@ function applyCodex(s, d) {
         case 'local_shell_call':
         case 'web_search_call': {
           const name = p.name || p.type;
-          const waiting = name.startsWith('request_user_input');
-          set(s, waiting ? 'waiting' : 'tool', describeCodexCall(name, p.arguments ?? p.input ?? p.action));
+          const raw = p.arguments ?? p.input ?? p.action;
+          const requestTool = codexRequestName(name, raw);
+          if (requestTool) {
+            const id = codexRequestId(p, `unmatched:${s.id}:${requestTool}:${ts ?? 'no-time'}:${pendingRequests(s).length}`);
+            addPendingRequest(s, id, 'question', codexRequestSummary('question', raw, p), {
+              async: requestTool === 'request_user_input_async',
+            });
+          }
+          set(s, requestTool ? 'waiting' : 'tool', requestTool ? 'Asking you a question' : describeCodexCall(name, raw));
           return;
         }
         case 'function_call_output':
-        case 'custom_tool_call_output':
+        case 'custom_tool_call_output': {
+          const id = codexRequestId(p, null);
+          const request = pendingRequests(s).find((item) => item.id === id);
+          const output = p.output ?? p.result ?? p.content;
+          if (request?.kind === 'question' && !request.async && hasAnsweredOutput(output)) removePendingRequest(s, id);
+          else if (request?.kind === 'approval' && output != null) removePendingRequest(s, id);
           set(s, 'thinking');
           return;
+        }
         case 'message':
+          if (p.role === 'user') {
+            if (resolveCodexQuestionReplies(s, codexText(p.content))) set(s, 'thinking');
+            return;
+          }
           if (p.role === 'assistant') {
             s.reply = clean(codexText(p.content)) || s.reply;
             set(s, 'typing', null);
@@ -391,6 +589,14 @@ function applyGemini(s, d) {
     case 'gemini': {
       if (d.model) s.model = d.model;
       const calls = Array.isArray(d.toolCalls) ? d.toolCalls : [];
+      for (const call of calls) {
+        const id = call.id ?? call.callId ?? call.tool_call_id;
+        if (call.status === 'awaiting_approval') {
+          if (id != null) addPendingRequest(s, id, 'approval', clean(describeGeminiTool(call), 140) || 'Approval requested');
+        } else if (id != null) {
+          removePendingRequest(s, id);
+        }
+      }
       const waiting = calls.find((c) => c.status === 'awaiting_approval');
       const pending = calls.filter((c) => GEMINI_PENDING.has(c.status));
       const text = clean(geminiText(d.content));
@@ -408,7 +614,10 @@ function applyGemini(s, d) {
     case 'info':
     case 'warning': {
       const t = geminiText(d.content).toLowerCase();
-      if (t.includes('cancel') || t.includes('interrupt')) set(s, 'interrupted', null);
+      if (t.includes('cancel') || t.includes('interrupt')) {
+        clearPendingRequests(s);
+        set(s, 'interrupted', null);
+      }
       return;
     }
   }
