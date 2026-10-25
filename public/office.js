@@ -1,6 +1,6 @@
 // Isometric office: agents that are working sit at cubicle desks; a few that
 // are off duty wander between the pantry, lounge, meeting room and ping-pong
-// table. Plain canvas 2D, no assets, no dependencies.
+// table. Plain canvas 2D with local provider logos, no dependencies.
 (() => {
   'use strict';
 
@@ -18,6 +18,18 @@
     codex: ['#10a37f', '#2bb38f', '#0d8a6b', '#4cc3a0'],
     gemini: ['#4f7cf0', '#6b8ff5', '#3d66d6', '#8aa6f8'],
   };
+  // Official product icons, shared by both renderers and the page UI.
+  // Load once per page from the same origin so video capture stays readable.
+  // Initials remain a fallback if an image cannot be loaded.
+  const AGENT_BADGES = {
+    claude: { label: 'Claude', short: 'Cl', color: '#c96442', logo: '/assets/agents/claude.png' },
+    codex: { label: 'Codex', short: 'Cx', color: '#10a37f', logo: '/assets/agents/codex.png' },
+    gemini: { label: 'Gemini', short: 'G', color: '#4f7cf0', logo: '/assets/agents/gemini.png' },
+  };
+  for (const badge of Object.values(AGENT_BADGES)) {
+    badge.image = new Image();
+    badge.image.src = badge.logo;
+  }
   const PANTS = ['#34405a', '#2c2c34', '#4a3f35', '#3b4a3f'];
   const PANEL = ['#7d93c4', '#d98b6a', '#7fb08a', '#c9a24c'];
 
@@ -175,10 +187,13 @@
   // ---------------------------------------------------------------- office
 
   class Office {
-    constructor(root, { onHover, label } = {}) {
+    constructor(root, { onHover, label, onFrame, showAgent = true, compact = false } = {}) {
       this.root = root;
       this.onHover = onHover || (() => {});
       this.label = label || ((s) => s.project || s.agent);
+      this.onFrame = onFrame;
+      this.showAgent = showAgent;
+      this.compact = compact;
       this.offDutyLabel = 'went home';
       this.canvas = document.createElement('canvas');
       this.canvas.className = 'office-canvas';
@@ -195,7 +210,9 @@
       this.pal = palette();
       this.plan = this.buildPlan(0);
       this.cat = { x: this.plan.W - 3, y: this.plan.D - 2, path: [], until: 0, face: 1 };
-      matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => (this.pal = palette()));
+      this.theme = matchMedia('(prefers-color-scheme: dark)');
+      this.onTheme = () => (this.pal = palette());
+      this.theme.addEventListener('change', this.onTheme);
 
       this.ro = new ResizeObserver(() => this.resize());
       this.ro.observe(root);
@@ -216,6 +233,7 @@
       this.dead = true;
       cancelAnimationFrame(this.raf);
       this.ro.disconnect();
+      this.theme.removeEventListener('change', this.onTheme);
       this.canvas.remove();
     }
 
@@ -580,8 +598,8 @@
     resize() {
       const r = this.root.getBoundingClientRect();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      this.cw = Math.max(200, r.width);
-      this.ch = Math.max(240, r.height);
+      this.cw = Math.max(this.compact ? 1 : 200, r.width);
+      this.ch = Math.max(this.compact ? 1 : 240, r.height);
       this.canvas.width = Math.round(this.cw * dpr);
       this.canvas.height = Math.round(this.ch * dpr);
       this.canvas.style.width = this.cw + 'px';
@@ -1296,14 +1314,18 @@
       const font = (w, px) => `${w} ${px}px ui-sans-serif, system-ui, -apple-system, "PingFang TC", "Apple Color Emoji", sans-serif`;
       c.font = font(600, 10);
 
-      const pill = (text, fg, bg, yy, alpha = 1) => {
+      const badge = this.showAgent && AGENT_BADGES[s.agent];
+      const pill = (text, fg, bg, yy, alpha = 1, identify = false) => {
         c.globalAlpha = alpha;
         let tx = text;
         while (c.measureText(tx).width > 118 && tx.length > 2) tx = tx.slice(0, -2) + '…';
-        const w = c.measureText(tx).width + 12;
-        this.roundRect(x - w / 2, yy - 8, w, 16, 8, bg);
+        const extra = badge && identify ? 26 : 0;
+        const w = c.measureText(tx).width + 12 + extra;
+        const height = extra ? 22 : 16;
+        this.roundRect(x - w / 2, yy - height / 2, w, height, 8, bg);
         c.fillStyle = fg;
-        c.fillText(tx, x, yy + 0.5);
+        c.fillText(tx, x + extra / 2, yy + 0.5);
+        if (extra) this.agentBadge(badge, x - w / 2 + 13, yy);
         c.globalAlpha = 1;
         return yy - 8;
       };
@@ -1377,7 +1399,27 @@
 
       const hover = this.hoverKey === p.key;
       if (!s.subagent || hover) {
-        pill(this.label(s), pal.text, pal.tagBg, top - 11, p.mode === 'work' || hover ? 1 : 0.7);
+        pill(this.label(s), pal.text, pal.tagBg, top - 11, p.mode === 'work' || hover ? 1 : 0.7, true);
+      } else if (badge) {
+        this.agentBadge(badge, x, top - 11);
+      }
+      c.restore();
+    }
+
+    agentBadge(badge, x, y) {
+      const c = this.ctx;
+      c.save();
+      c.globalAlpha = 1;
+      if (badge.image.complete && badge.image.naturalWidth > 0) {
+        c.imageSmoothingEnabled = true;
+        c.imageSmoothingQuality = 'high';
+        c.drawImage(badge.image, x - 9, y - 9, 18, 18);
+      } else {
+        c.fillStyle = this.pal.text;
+        c.font = '800 10px ui-sans-serif, system-ui, sans-serif';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText(badge.short, x, y + 0.5);
       }
       c.restore();
     }
@@ -1456,7 +1498,12 @@
       this.t = now;
       if (!this.visible) return;
       this.step(dt);
-      if (this.draw() !== false && !this.first && ++this.framesShown === 3) this.markReady(true);
+      if (this.draw() !== false) {
+        if (!this.first && ++this.framesShown === 3) this.markReady(true);
+        // Capture immediately: a WebGL drawing buffer may be cleared after
+        // this task. The overlay and the 3D canvas must be copied together.
+        if (this.onFrame) this.onFrame(this);
+      }
     }
 
     // Advance people and the cat; shared by the 2D and 3D renderers.
@@ -1511,7 +1558,17 @@
         else it.draw();
       }
       this.pingPongBall();
-      for (const [p, at] of heads) this.bubble(p, at);
+      if (this.compact) {
+        // Keep labels readable when the room is scaled down for PiP.
+        c.save();
+        c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        for (const [p, at] of heads) this.bubble(p, {
+          ...at, x: at.x * this.cam.zoom + this.cam.ox, y: at.y * this.cam.zoom + this.cam.oy,
+        });
+        c.restore();
+      } else {
+        for (const [p, at] of heads) this.bubble(p, at);
+      }
 
       if (this.offDuty > 0) {
         const d = this.iso(0.2, this.plan.door.y + 0.9, 0);
@@ -1533,5 +1590,6 @@
   }
 
   window.Office = Office;
+  window.OFFICE_AGENT_BADGES = AGENT_BADGES;
   window.OfficeGrid = Grid;
 })();

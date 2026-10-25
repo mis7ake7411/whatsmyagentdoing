@@ -95,22 +95,25 @@ function geminiFiles() {
 }
 
 function codexFiles(sinceMs) {
-  // sessions/YYYY/MM/DD/rollout-*.jsonl — only walk days inside the window.
+  // Date folders record when a chat began, not when it was last used. Walk
+  // every date so a months-old chat can be discovered when it resumes.
+  // Check mtime here to keep inactive history out of the 1s polling list;
+  // only the 5s discovery scan stats those files, without reading their logs.
   const out = [];
-  const cutoff = new Date(sinceMs - 86400000);
-  const key = (y, m, d) => `${y}-${m}-${d}`;
-  const minKey = key(cutoff.getFullYear(), String(cutoff.getMonth() + 1).padStart(2, '0'), String(cutoff.getDate()).padStart(2, '0'));
   for (const y of ls(CODEX_DIR)) {
     if (!y.isDirectory()) continue;
     for (const m of ls(path.join(CODEX_DIR, y.name))) {
       if (!m.isDirectory()) continue;
       for (const d of ls(path.join(CODEX_DIR, y.name, m.name))) {
-        if (!d.isDirectory() || key(y.name, m.name, d.name) < minKey) continue;
+        if (!d.isDirectory()) continue;
         const dir = path.join(CODEX_DIR, y.name, m.name, d.name);
         for (const f of ls(dir)) {
           if (!f.isFile() || !f.name.endsWith('.jsonl')) continue;
+          const file = path.join(dir, f.name);
+          const st = statSafe(file);
+          if (!st || st.mtimeMs < sinceMs) continue;
           const id = (f.name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/) || [])[1] || f.name;
-          out.push({ agent: 'codex', file: path.join(dir, f.name), id });
+          out.push({ agent: 'codex', file, id });
         }
       }
     }

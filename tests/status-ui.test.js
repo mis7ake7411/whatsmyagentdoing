@@ -8,7 +8,7 @@ const vm = require('node:vm');
 
 // Exercise the actual card/render/onData functions without starting a browser
 // or replacing their output with a mocked renderer.
-function page() {
+function page(search = '') {
   const elements = new Map();
   const element = (id) => {
     if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', style: {}, options: [{}],
@@ -19,11 +19,13 @@ function page() {
   function Notification(title, options) { notifications.push({ title, options }); }
   Notification.permission = 'granted';
   const context = vm.createContext({ console, Intl, URLSearchParams, Notification,
-    document: { getElementById: element, querySelectorAll: () => [], addEventListener() {}, documentElement: {} },
-    navigator: { languages: ['en'] }, location: { search: '' }, history: {},
+    document: { getElementById: element, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} }, body: { classList: { add() {} } } },
+    Image: class {},
+    navigator: { languages: ['en'] }, location: { search }, history: { replaceState() {} },
     localStorage: { getItem: () => null, setItem() {} }, office: null, refreshTip() {},
   });
   context.window = context;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/i18n.js'), 'utf8'), context);
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   const script = html.split('<script>')[1].split('// ---- office view')[0];
@@ -101,4 +103,27 @@ test('completed state describes a turn, not overall task acceptance', () => {
   const p = page();
   p.context.item = session({ status: 'done' });
   assert.match(p.run('card(item, 2000)'), /Turn completed/);
+});
+
+test('compact list retains pending requests after turn completion without duplicating groups', () => {
+  const p = page('?pip=1');
+  p.context.items = [session({ status: 'done', needsInput: true,
+    pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Still unanswered' }] }),
+    session({ key: 'codex:done', status: 'done' })];
+  p.run("state.view = 'list'; state.data.sessions = items; render()");
+  const html = p.elements.get('main').innerHTML;
+  assert.match(html, /Still unanswered/);
+  assert.equal((html.match(/data-key="codex:one"/g) || []).length, 1);
+  assert.doesNotMatch(html, /data-key="codex:done"/);
+});
+
+test('compact page suppresses pending-request notifications while preserving request state', () => {
+  const p = page('?pip=1');
+  p.context.data = { now: Date.now(), sessions: [session()] };
+  p.run('onData(data)');
+  p.context.data = { now: Date.now(), sessions: [session({ needsInput: true,
+    pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] })] };
+  p.run('onData(data)');
+  assert.equal(p.notifications.length, 0);
+  assert.equal(p.run('state.data.sessions[0].pendingRequests[0].id'), 'q1');
 });

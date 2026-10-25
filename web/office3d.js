@@ -68,6 +68,7 @@ export class Office3D extends window.Office {
     PENDING_SCENE = (opts && opts.scene) || null;
     super(root, opts);
     this.sceneDef = PENDING_SCENE;
+    this.compact = !!opts?.compact;
     this.canvas.classList.add('office-overlay');
     try {
       this.gl = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -942,7 +943,7 @@ export class Office3D extends window.Office {
       const dist = 40;
       this.camera.position.set(center.x + dist * 0.62, center.y + dist * 0.58, center.z + dist * 0.62);
       this.controls.target.copy(center);
-      this.camera.zoom = 1.25;
+      this.camera.zoom = this.compact ? 1 : 1.25;
       this.fitted = true;
     }
     this.camera.lookAt(this.controls.target);
@@ -956,6 +957,8 @@ export class Office3D extends window.Office {
     }
     const aspect = this.cw / this.ch;
     let w = (maxX - minX) * 1.06, h = (maxY - minY) * 1.1;
+    // Leave room for screen-space badges and bubbles in a small PiP window.
+    if (this.compact) h *= this.ch / Math.max(80, this.ch - 48);
     if (w / h > aspect) h = w / aspect; else w = h * aspect;
     const cxv = (minX + maxX) / 2, cyv = (minY + maxY) / 2;
     Object.assign(this.camera, { left: cxv - w / 2, right: cxv + w / 2, top: cyv + h / 2, bottom: cyv - h / 2 });
