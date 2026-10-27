@@ -133,9 +133,14 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
       fs.createReadStream(path.join(PUBLIC, file)).pipe(res);
     } else if (Object.keys(MOUNTS).some((m) => url.pathname.startsWith(m))) {
       const m = Object.keys(MOUNTS).find((k) => url.pathname.startsWith(k));
-      serveFile(res, MOUNTS[m], decodeURIComponent(url.pathname.slice(m.length)));
+      let rel;
+      try { rel = decodeURIComponent(url.pathname.slice(m.length)); }
+      catch { res.writeHead(400).end(); return; }
+      serveFile(res, MOUNTS[m], rel);
     } else if (url.pathname.startsWith('/scenes/')) {
-      const rel = decodeURIComponent(url.pathname.slice('/scenes/'.length));
+      let rel;
+      try { rel = decodeURIComponent(url.pathname.slice('/scenes/'.length)); }
+      catch { res.writeHead(400).end(); return; }
       const [id, ...rest] = rel.split('/');
       const dir = scenes.sceneDir(id);
       if (!dir) res.writeHead(404).end();
