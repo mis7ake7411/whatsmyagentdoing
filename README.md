@@ -107,6 +107,14 @@ nonterminal sessions are marked as having outdated information; this does not
 prove that the task has stopped or made no progress. **Turn completed** means
 the recorded turn ended, not that the overall task passed acceptance checks.
 
+Dashboard connection health is shown separately from agent log activity. Each
+page records when it last received a valid dashboard snapshot, using the local
+date and time plus an elapsed age; this is not the time of the latest agent log.
+The dashboard can stay connected while an agent has no new log entries. When
+the connection drops, the page keeps the last received snapshot and marks the
+current agent state unconfirmed. Reconnection is confirmed only after a valid
+snapshot arrives, even if its session data is unchanged.
+
 Unanswered questions and approval requests are tracked separately from tool
 activity. The list can show a running tool and a pending question together;
 the office uses its existing waiting animation. Related answers, cancellations,

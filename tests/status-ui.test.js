@@ -10,15 +10,44 @@ const vm = require('node:vm');
 // or replacing their output with a mocked renderer.
 function page(search = '') {
   const elements = new Map();
+  const sources = [];
+  const clock = { now: 1700000000000 };
+  let dateTimeFormatCreations = 0;
+  const testIntl = {
+    DateTimeFormat: class extends Intl.DateTimeFormat {
+      constructor(...args) { super(...args); dateTimeFormatCreations++; }
+    },
+    RelativeTimeFormat: Intl.RelativeTimeFormat,
+  };
+  class TestDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [clock.now])); }
+    static now() { return clock.now; }
+  }
+  class FakeEventSource {
+    constructor(url) { this.url = url; this.closed = false; sources.push(this); }
+    open() { this.onopen?.({ type: 'open' }); }
+    fail() { this.onerror?.({ type: 'error' }); }
+    send(value) {
+      const data = typeof value === 'string' ? value : JSON.stringify(value);
+      this.onmessage?.({ data });
+    }
+    close() { this.closed = true; }
+  }
   const element = (id) => {
-    if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', style: {}, options: [{}],
-      classList: { toggle() {}, add() {}, remove() {} }, addEventListener() {} });
+    if (!elements.has(id)) {
+      const classes = new Set();
+      elements.set(id, { innerHTML: '', textContent: '', style: {}, options: [{}], dataset: {},
+        classList: {
+          toggle(name, force = !classes.has(name)) { force ? classes.add(name) : classes.delete(name); },
+          add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, contains(name) { return classes.has(name); },
+        }, addEventListener() {} });
+    }
     return elements.get(id);
   };
   const notifications = [];
   function Notification(title, options) { notifications.push({ title, options }); }
   Notification.permission = 'granted';
-  const context = vm.createContext({ console, Intl, URLSearchParams, Notification,
+  const context = vm.createContext({ console, Intl: testIntl, Date: TestDate, EventSource: FakeEventSource, URLSearchParams, Notification,
     document: { getElementById: element, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} }, body: { classList: { add() {} } } },
     Image: class {},
     navigator: { languages: ['en'] }, location: { search }, history: { replaceState() {} },
@@ -30,7 +59,8 @@ function page(search = '') {
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   const script = html.split('<script>')[1].split('// ---- office view')[0];
   vm.runInContext(script, context);
-  return { context, elements, notifications, run: (code) => vm.runInContext(code, context) };
+  return { context, elements, notifications, sources, now: () => clock.now, dateTimeFormatCreations: () => dateTimeFormatCreations,
+    setNow: (value) => { clock.now = value; }, run: (code) => vm.runInContext(code, context) };
 }
 
 function session(overrides = {}) {
@@ -38,6 +68,107 @@ function session(overrides = {}) {
     activity: 'Shell: tests', subagent: false, lastEventAt: 1000, turnStartedAt: 1000,
     pendingRequests: [], needsInput: false, staleAfterMs: 600000, ...overrides };
 }
+
+function connectionText(p) {
+  return ['connState', 'connTime', 'connNote'].map((id) => p.elements.get(id)?.textContent || '').join(' ');
+}
+
+test('dashboard connection and last update stay distinct from stale agent logs', () => {
+  const p = page();
+  p.run('connect()');
+  assert.equal(p.run('state.connection'), 'waiting');
+  assert.match(connectionText(p), /Waiting for a valid dashboard update/);
+  assert.match(connectionText(p), /No valid data received yet/);
+
+  p.sources[0].open();
+  assert.equal(p.run('state.connection'), 'waiting');
+  const receivedAt = p.now();
+  const snapshot = { now: receivedAt, sessions: [session({ lastEventAt: receivedAt - 11 * 60 * 1000 })] };
+  p.sources[0].send(snapshot);
+  assert.equal(p.run('state.connection'), 'connected');
+  assert.equal(p.run('state.lastUpdateAt'), receivedAt);
+  assert.match(connectionText(p), /Connected/);
+  assert.match(connectionText(p), /Last data update/);
+  assert.match(p.elements.get('connTime').textContent, /\d{1,2}:\d{2}:\d{2}/);
+  p.run("state.view = 'list'; render()");
+  assert.match(p.elements.get('main').innerHTML, /No new log events/);
+  assert.match(p.elements.get('main').innerHTML, /does not mean the task has stopped/);
+
+  const before = p.elements.get('connTime').textContent;
+  p.setNow(receivedAt + 8000);
+  p.run('tipKey = null; tickTimes()');
+  assert.equal(p.run('state.lastUpdateAt'), receivedAt);
+  assert.notEqual(p.elements.get('connTime').textContent, before);
+  assert.match(p.elements.get('connTime').textContent, /8s/);
+});
+
+test('dashboard errors retain the snapshot and only a valid reconnect message clears them', () => {
+  const p = page();
+  p.run('connect()');
+  const source = p.sources[0];
+  const pending = session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] });
+  source.send({ now: p.now(), sessions: [pending] });
+  const receivedAt = p.run('state.lastUpdateAt');
+  const data = p.run('JSON.stringify(state.data)');
+  const prev = p.run('JSON.stringify([...state.prev])');
+  const skew = p.run('state.skew');
+  const notifications = p.notifications.length;
+
+  source.fail();
+  assert.equal(p.run('state.connection'), 'disconnected');
+  assert.equal(p.run('state.lastUpdateAt'), receivedAt);
+  assert.equal(p.run('JSON.stringify(state.data)'), data);
+  assert.equal(p.run('JSON.stringify([...state.prev])'), prev);
+  assert.equal(p.run('state.skew'), skew);
+  assert.match(connectionText(p), /current agent state is unconfirmed/);
+
+  p.setNow(receivedAt + 5000);
+  source.open();
+  assert.equal(p.run('state.connection'), 'disconnected');
+  assert.equal(p.run('state.lastUpdateAt'), receivedAt);
+  source.send({ now: p.now(), sessions: [pending] });
+  assert.equal(p.run('state.connection'), 'connected');
+  assert.equal(p.run('state.lastUpdateAt'), receivedAt + 5000);
+  assert.equal(p.run('state.data.sessions[0].pendingRequests[0].id'), 'q1');
+  assert.equal(p.notifications.length, notifications);
+});
+
+test('invalid EventSource messages keep the last valid data and wait for a valid update', () => {
+  const p = page();
+  p.run('connect()');
+  const source = p.sources[0];
+  source.send({ now: p.now(), sessions: [session()] });
+  const receivedAt = p.run('state.lastUpdateAt');
+  const data = p.run('JSON.stringify(state.data)');
+  const prev = p.run('JSON.stringify([...state.prev])');
+  const skew = p.run('state.skew');
+
+  assert.doesNotThrow(() => source.send('{bad json'));
+  assert.equal(p.run('state.connection'), 'waiting');
+  assert.doesNotThrow(() => source.send({ now: p.now() + 1000, sessions: 'invalid' }));
+  assert.equal(p.run('state.connection'), 'waiting');
+  assert.equal(p.run('state.lastUpdateAt'), receivedAt);
+  assert.equal(p.run('JSON.stringify(state.data)'), data);
+  assert.equal(p.run('JSON.stringify([...state.prev])'), prev);
+  assert.equal(p.run('state.skew'), skew);
+  assert.match(connectionText(p), /Waiting for a valid dashboard update/);
+});
+
+test('connection timestamp formatting reuses its locale formatter between preview frames', () => {
+  const p = page();
+  p.run('connect()');
+  p.sources[0].send({ now: p.now(), sessions: [session()] });
+  const afterSnapshot = p.dateTimeFormatCreations();
+  assert.ok(afterSnapshot > 0);
+  for (let i = 0; i < 120; i++) p.run('connectionInfo()');
+  assert.equal(p.dateTimeFormatCreations(), afterSnapshot);
+
+  p.run("applyLang('zh-TW')");
+  const afterLanguageChange = p.dateTimeFormatCreations();
+  assert.equal(afterLanguageChange, afterSnapshot + 1);
+  for (let i = 0; i < 120; i++) p.run('connectionInfo()');
+  assert.equal(p.dateTimeFormatCreations(), afterLanguageChange);
+});
 
 test('card keeps execution state and independently shows the unanswered question', () => {
   const p = page();

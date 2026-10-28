@@ -204,8 +204,12 @@
   .ver code { background: var(--panel); border: 1px solid var(--line); padding: 2px 6px; border-radius: 6px; }
   .empty { text-align: center; color: var(--muted); padding: 60px 16px; border: 1px dashed var(--line); border-radius: 12px; }
   .empty code { background: var(--panel); padding: 2px 6px; border-radius: 4px; }
-  .conn { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); background: var(--error); color: #fff; padding: 6px 14px; border-radius: 999px; font-size: 12.5px; display: none; }
-  .conn.on { display: block; }
+  .conn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; min-width: 0; margin: -5px 0 14px; padding: 7px 10px; border: 1px solid var(--line); border-left: 3px solid var(--tool); border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .conn[data-connection="waiting"] { border-left-color: var(--waiting); }
+  .conn[data-connection="disconnected"] { border-left-color: var(--error); }
+  .conn-status { color: var(--ink); font-weight: 600; }
+  .conn-time { min-width: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .conn-note { flex-basis: 100%; }
 
   /* The PiP iframe owns its animation clock, layout, and pointer events. */
   body.pip { padding: 8px; }
@@ -216,6 +220,7 @@
   body.pip .controls { width: auto; padding: 0; border: 0; }
   body.pip .chip { padding: 2px 6px; font-size: 11px; }
   body.pip .summary { gap: 4px; width: auto; margin-left: 0; }
+  body.pip .conn { gap: 3px 8px; margin: -4px 0 8px; padding: 6px 8px; font-size: 11px; }
   body.pip #officeWrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   body.pip .office { flex: 1; height: auto; min-height: 120px; }
   body.pip #main { overflow: auto; min-height: 0; }
@@ -275,6 +280,11 @@
       </details>
     </div>
   </header>
+  <aside class="conn" id="conn" data-connection="waiting">
+    <span class="conn-status" id="connState" role="status" aria-live="polite"></span>
+    <span class="conn-time" id="connTime"></span>
+    <span class="conn-note" id="connNote"></span>
+  </aside>
   <aside id="officeSignals" class="office-signals" aria-live="polite"></aside>
   <p class="pip-error" id="pipError" role="alert" hidden></p>
   <div class="pip-preview" id="pipPreview" hidden>
@@ -290,7 +300,6 @@
   </div>
   <main id="main"></main>
 </div>
-<div class="conn" id="conn" data-t="disconnected"></div>
 <div class="tip" id="tip"></div>
 <div class="ver" id="ver"></div>
 <script src="/i18n.js"></script>
@@ -326,6 +335,7 @@ function applyLang(code) {
   if (typeof syncControls === 'function') syncControls();
   if (typeof renderSceneSel === 'function') renderSceneSel();
   if (typeof renderVersion === 'function') renderVersion();
+  if (typeof renderConnection === 'function') renderConnection();
 }
 
 const store = (() => {
@@ -370,6 +380,8 @@ const state = {
   ...readPreferences(),
   scenes: [],
   data: { now: Date.now(), sessions: [] },
+  connection: 'waiting',
+  lastUpdateAt: null,
   skew: 0,
   prev: new Map(),
   flash: new Set(),
@@ -561,9 +573,63 @@ function tickTimes() {
     const s = byKey.get(el.dataset.time);
     if (s) el.textContent = timeLabel(s, now);
   });
+  renderConnection();
+}
+
+let connectionDateFormatter = null;
+let connectionDateFormatterLocale = '';
+let connectionDateText = { at: null, locale: '', value: '' };
+function formatConnectionDate(at) {
+  if (connectionDateText.at === at && connectionDateText.locale === L.html) return connectionDateText.value;
+  if (!connectionDateFormatter || connectionDateFormatterLocale !== L.html) {
+    connectionDateFormatterLocale = L.html;
+    connectionDateFormatter = new Intl.DateTimeFormat(L.html, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit',
+    });
+  }
+  connectionDateText = { at, locale: L.html, value: connectionDateFormatter.format(new Date(at)) };
+  return connectionDateText.value;
+}
+
+function connectionInfo() {
+  const status = state.connection === 'connected' ? L.connectionConnected
+    : state.connection === 'disconnected' ? L.connectionDisconnected : L.connectionWaiting;
+  const time = state.lastUpdateAt == null ? L.noLastUpdate : `${L.lastUpdate}: ${formatConnectionDate(state.lastUpdateAt)} · ${L.updatedAgo(dur(Date.now() - state.lastUpdateAt))}`;
+  const note = state.connection === 'disconnected'
+    ? state.lastUpdateAt == null ? L.connectionNoData : L.connectionDisconnectedLast
+    : state.connection === 'waiting' && state.lastUpdateAt != null ? L.connectionWaitingLast : '';
+  const previewStatus = state.connection === 'disconnected' ? L.previewDisconnected
+    : state.connection === 'waiting' && state.lastUpdateAt != null ? L.previewWaiting : status;
+  return { status, time, note, previewStatus };
+}
+
+function renderConnection() {
+  const row = document.getElementById('conn');
+  if (!row) return;
+  const info = connectionInfo();
+  row.dataset.connection = state.connection;
+  const status = document.getElementById('connState');
+  if (status.textContent !== info.status) status.textContent = info.status;
+  const time = document.getElementById('connTime');
+  if (time.textContent !== info.time) time.textContent = info.time;
+  const note = document.getElementById('connNote');
+  if (note.textContent !== info.note) note.textContent = info.note;
+  note.hidden = !info.note;
+}
+
+function validSnapshot(data) {
+  return !!data && typeof data === 'object' && !Array.isArray(data) && Number.isFinite(data.now) &&
+    Array.isArray(data.sessions) && data.sessions.every((s) => s && typeof s === 'object' && !Array.isArray(s) &&
+      typeof s.key === 'string' && typeof s.status === 'string' &&
+      (s.pendingRequests == null || (Array.isArray(s.pendingRequests) && s.pendingRequests.every((r) => r && typeof r === 'object' && !Array.isArray(r)))));
 }
 
 function onData(data) {
+  if (!validSnapshot(data)) {
+    state.connection = 'waiting';
+    renderConnection();
+    return false;
+  }
   state.skew = Date.now() - data.now;
   const first = state.prev.size === 0;
   state.flash.clear();
@@ -589,15 +655,24 @@ function onData(data) {
   }
   state.data = data;
   state.loaded = true;
+  state.connection = 'connected';
+  state.lastUpdateAt = Date.now();
   applyLang(chooseLang(data.lang));
   render();
+  renderConnection();
+  return true;
 }
 
 function connect() {
   const es = new EventSource('/events');
-  const conn = document.getElementById('conn');
-  es.onmessage = (e) => { conn.classList.remove('on'); onData(JSON.parse(e.data)); };
-  es.onerror = () => conn.classList.add('on');
+  es.onmessage = (e) => {
+    let data;
+    try { data = JSON.parse(e.data); }
+    catch { state.connection = 'waiting'; renderConnection(); return; }
+    onData(data);
+  };
+  es.onerror = () => { state.connection = 'disconnected'; renderConnection(); };
+  renderConnection();
 }
 
 // Native disclosure keeps settings keyboard-accessible without a modal focus trap.
@@ -844,6 +919,7 @@ popout = new OfficePopout({
   preferences: () => ({ ...Object.fromEntries(Object.keys(PREF_DEFAULTS).map((k) => [k, state[k]])), lang: store.get('lang', 'auto') }),
   office: () => office,
   text: (key) => L[key],
+  connectionInfo: () => connectionInfo(),
   changed: () => { syncControls(); render(); },
 });
 // Both windows share preferences; keep filters, language, scene and badges in

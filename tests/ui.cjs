@@ -14,6 +14,11 @@ async function screenshot(page, name) {
   fs.mkdirSync(screenshots, { recursive: true });
   await page.screenshot({ path: path.join(screenshots, name + '.png') });
 }
+async function screenshotElement(locator, name) {
+ if (!screenshots) return;
+ fs.mkdirSync(screenshots, { recursive: true });
+ await locator.screenshot({ path: path.join(screenshots, name + '.png') });
+}
 const checks=[];
 const check=(name)=>{checks.push(name);console.log('PASS',name)};
 const sessions = [
@@ -26,7 +31,7 @@ const sessions = [
 ].map(s=>({...s,lastEventAt:Date.now(),turnStartedAt:Date.now()-1000,cwd:'/demo/'+s.project}));
 async function stable(page){
  await page.waitForFunction(()=>typeof office!=='undefined' && office?.framesShown>4);
- await page.evaluate(s=>{window.__events?.close();onData({now:Date.now(),sessions:s})},sessions);
+ await page.evaluate(s=>onData({now:Date.now(),sessions:s}),sessions);
 }
 async function openSettings(page) {
  if (!(await page.locator('#settingsMenu').getAttribute('open') !== null)) await page.click('#settingsMenu > summary');
@@ -66,12 +71,31 @@ async function drawnLogos(target) {
   browser=await chromium.launch({headless:process.env.WMAD_HEADED !== '1',channel:'chrome',ignoreDefaultArgs:['--disable-background-timer-throttling','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding'],args:['--window-size=1280,960']});
   const context=await browser.newContext({viewport:{width:1280,height:960},locale:'en-US'});
   await context.addInitScript(sessions=>{
-   window.EventSource=class {constructor(){window.__events=this;setTimeout(()=>{if(!this.closed)this.onmessage?.({data:JSON.stringify({now:Date.now(),sessions})})},0)}close(){this.closed=true}};
+  window.EventSource=class {
+   constructor(){window.__events=this;setTimeout(()=>{if(!this.closed)this.send({now:Date.now(),sessions})},0)}
+   send(value){this.onmessage?.({data:typeof value==='string'?value:JSON.stringify(value)})}
+   fail(){this.onerror?.({type:'error'})}
+   open(){this.onopen?.({type:'open'})}
+   close(){this.closed=true}
+  };
    window.__notifications=[];
    window.Notification=class {static permission='granted';constructor(title,options){window.__notifications.push({title,options})}};
   },sessions);
   context.on('page',p=>p.on('pageerror',e=>errors.push(String(e))));
   const page=await context.newPage();await page.goto(base);await stable(page);
+  await page.waitForFunction(()=>state.connection==='connected'&&state.lastUpdateAt!==null);
+  assert.equal(await page.locator('#conn').isVisible(),true);
+  assert.match(await page.locator('#conn').innerText(),/Connected/);
+  let mainUpdate=await page.evaluate(()=>state.lastUpdateAt);
+  await page.evaluate(()=>__events.fail());await page.waitForFunction(()=>state.connection==='disconnected');
+  assert.equal(await page.evaluate(()=>state.lastUpdateAt),mainUpdate);
+  assert.match(await page.locator('#conn').innerText(),/current agent state is unconfirmed/);
+  await page.evaluate(()=>__events.open());
+  assert.equal(await page.evaluate(()=>state.connection),'disconnected');
+  await page.evaluate(s=>__events.send({now:Date.now(),sessions:s}),sessions);
+  await page.waitForFunction(()=>state.connection==='connected');
+  mainUpdate=await page.evaluate(()=>state.lastUpdateAt);
+  check('main page retains its last update through disconnect and recovers only on a valid snapshot');
   assert.equal(await page.locator('h1 [data-t]').innerText(),"What's my agent doing");
   assert.equal(await page.locator('#showAgent').isChecked(),true);
   assert.deepEqual([...new Set(await badges(page))].sort(),['Cl','Cx','G','OMP']);
@@ -80,6 +104,7 @@ async function drawnLogos(target) {
   check('all four agent icons load and show in 2D and the legend; OMP uses a neutral mark');
   await openSettings(page);await page.click('#agentSeg [data-v=omp]');
   await page.click('#viewSeg [data-v=list]');
+  assert.equal(await page.locator('#conn').isVisible(),true);
   assert.equal(await page.locator('.card').count(),1);
   assert.equal(await page.locator('.card .agent.omp').innerText(),'OMP');
   assert.equal(await page.locator('.card .copy').getAttribute('data-copy'),sessions.find(s=>s.agent==='omp').resumeCommand);
@@ -95,7 +120,7 @@ async function drawnLogos(target) {
   check('2D shows four providers and subagents without duplicate badges');
   await openSettings(page);await page.uncheck('#showAgent');assert.equal((await badges(page)).length,0);
   assert.equal(await page.locator('#agentLegend').isVisible(),false);
-  await page.reload();await stable(page);assert.equal(await page.locator('#showAgent').isChecked(),false);
+  await page.reload();await stable(page);mainUpdate=await page.evaluate(()=>state.lastUpdateAt);assert.equal(await page.locator('#showAgent').isChecked(),false);
   await openSettings(page);await page.check('#showAgent');check('badge toggle hides markers and legend and persists across reload');
   await page.click('#qualSeg [data-v=high]');
   await page.waitForFunction(()=>officeKind==='high:office'&&office?.loaded&&office.framesShown>4,{},{timeout:30000});
@@ -105,14 +130,40 @@ async function drawnLogos(target) {
   check('3D shows the same four provider badges');
   await page.click('#pipBtn');await page.waitForFunction(()=>!!popout.win);
   const pip=context.pages().find(p=>p!==page);assert.ok(pip);
+  await pip.setViewportSize({width:480,height:400});
   const frame=await (async()=>{for(let i=0;i<100;i++){const f=pip.frames().find(f=>f.url().includes('?pip=1'));if(f)return f;await new Promise(r=>setTimeout(r,50))}throw Error('No compact frame')})();
   await frame.waitForFunction(()=>office?.loaded&&office.framesShown>4);
-  await frame.evaluate(s=>{window.__events?.close();onData({now:Date.now(),sessions:s})},sessions);
+  assert.equal(await frame.evaluate(()=>innerWidth),480);
+  await frame.evaluate(s=>onData({now:Date.now(),sessions:s}),sessions);
+  await frame.waitForFunction(()=>state.connection==='connected');
+  assert.equal(await frame.locator('#conn').isVisible(),true);
+  const pipUpdate=await frame.evaluate(()=>state.lastUpdateAt);
+  await Promise.all([page.evaluate(()=>__events.fail()),frame.evaluate(()=>__events.fail())]);
+  await Promise.all([
+   page.waitForFunction(()=>state.connection==='disconnected'),
+   frame.waitForFunction(()=>state.connection==='disconnected'),
+  ]);
+  assert.equal(await page.evaluate(()=>state.lastUpdateAt),mainUpdate);
+  assert.equal(await frame.evaluate(()=>state.lastUpdateAt),pipUpdate);
+  assert.match(await frame.locator('#conn').innerText(),/current agent state is unconfirmed/);
+  assert.equal(await frame.evaluate(()=>innerWidth),480);
+  const offlinePipStatus=await frame.locator('#conn').boundingBox();
+  assert.ok(offlinePipStatus&&offlinePipStatus.x>=0&&offlinePipStatus.x+offlinePipStatus.width<=480&&offlinePipStatus.y+offlinePipStatus.height<=400);
+  await Promise.all([page.evaluate(()=>__events.open()),frame.evaluate(()=>__events.open())]);
+  assert.equal(await frame.evaluate(()=>state.connection),'disconnected');
+  await Promise.all([
+   page.evaluate(s=>__events.send({now:Date.now(),sessions:s}),sessions),
+   frame.evaluate(s=>__events.send({now:Date.now(),sessions:s}),sessions),
+  ]);
+  await Promise.all([
+   page.waitForFunction(()=>state.connection==='connected'),
+   frame.waitForFunction(()=>state.connection==='connected'),
+  ]);
+  check('main and Document PiP keep independent connection and last-update state through loss and recovery');
   assert.deepEqual(await drawnLogos(frame),['claude','codex','gemini','omp']);
   assert.equal(await page.evaluate(()=>office.visible),false);
   assert.equal(await frame.evaluate(()=>state.quality),'high');
   assert.equal(await frame.locator('#pipBtn').isVisible(),false);
-  await pip.setViewportSize({width:480,height:400});
   await frame.waitForFunction(()=>!document.getElementById('office').classList.contains('loading'));await page.waitForTimeout(400);await screenshot(pip, 'pip-3d');
   assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   check('real Document PiP opens 3D at compact size and suspends the main office');
@@ -123,9 +174,13 @@ async function drawnLogos(target) {
   await frame.click('#viewSeg [data-v=office]');
   check('OMP is in the pop-out filter and list with the right Resume command');
   await openSettings(page);await page.uncheck('#showAgent');await frame.waitForFunction(()=>!state.showAgent&&!office.showAgent);
+  const pipUpdateBeforeLanguage=await frame.evaluate(()=>state.lastUpdateAt);
   await openSettings(page);await page.selectOption('#langSel','zh-TW');await frame.waitForFunction(()=>langCode==='zh-TW');
+  assert.equal(await frame.evaluate(()=>state.lastUpdateAt),pipUpdateBeforeLanguage);
+  assert.match(await frame.locator('#conn').innerText(),/儀表板連線正常/);
   await openSettings(page);await page.click('#agentSeg [data-v=codex]');await frame.waitForFunction(()=>state.agent==='codex');
   await frame.click('#viewSeg [data-v=list]');await page.waitForFunction(()=>state.view==='list');
+  assert.equal(await frame.locator('#conn').isVisible(),true);
   const compactSessions=[
    {key:'codex:pending-error',id:'pending-error',agent:'codex',project:'pending-error',status:'error',error:'Permission denied',needsInput:true,pendingRequests:[{id:'q1',kind:'question',summary:'Choose a recovery action'}]},
    {key:'codex:error',id:'error',agent:'codex',project:'error-project',status:'error',error:'Tool crashed'},
@@ -192,12 +247,43 @@ async function drawnLogos(target) {
   check('request failure gives a translated error and leaves the dashboard usable');
   // Force only the capability branch; rendering and MediaStream remain real.
   const fallback=await context.newPage();
+  await fallback.setViewportSize({width:480,height:400});
   await fallback.addInitScript(()=>Object.defineProperty(window,'documentPictureInPicture',{value:undefined}));
   await fallback.goto(base+'/?view=office&quality=high');await stable(fallback);
   await fallback.waitForFunction(()=>office.loaded&&office.framesShown>4);
   await fallback.click('#pipBtn');
   await fallback.waitForFunction(()=>!!popout.stream&&!popout.busy&&document.getElementById('pipVideo').videoWidth>0);
   assert.equal(await fallback.locator('#pipPreview').isVisible(),true);
+  await fallback.evaluate(()=>__events.fail());await fallback.waitForFunction(()=>state.connection==='disconnected');
+  const overlay=await fallback.evaluate(()=>{
+   const c=popout.captureContext,original=c.fillText,originalRect=c.fillRect,originalDraw=c.drawImage,values=[],images=[];
+   let band;
+   c.fillText=function(text,...args){values.push({text:String(text),font:c.font,y:args[1],width:c.measureText(String(text)).width,maxWidth:args[2]});return original.call(this,text,...args)};
+   c.fillRect=function(...args){if(args[0]===0&&args[1]===0&&args[2]===popout.captureCanvas.width&&args[3]<popout.captureCanvas.height)band={top:args[1],height:args[3]};return originalRect.call(this,...args)};
+   c.drawImage=function(image,...args){if(args.length>=4)images.push({top:args[1],height:args[3]});return originalDraw.call(this,image,...args)};
+   try {popout.drawPreview(office)} finally {c.fillText=original;c.fillRect=originalRect;c.drawImage=originalDraw}
+   return {videoWidth:document.getElementById('pipVideo').getBoundingClientRect().width,canvasWidth:popout.captureCanvas.width,canvasHeight:popout.captureCanvas.height,band,lines:values,images};
+  });
+  assert.equal(overlay.lines.length,2);
+  assert.ok(overlay.videoWidth<=480&&overlay.videoWidth>=400);
+  assert.ok(overlay.band&&overlay.band.top===0&&overlay.band.height>=80&&overlay.band.height<=100,'connection text sits in a dedicated top band');
+  assert.ok(overlay.images.length>0&&overlay.images.every(image=>image.top>=overlay.band.height),'office rendering stays below the connection band');
+  for (const line of overlay.lines) {
+   const fontSize=Number(line.font.match(/(\d+(?:\.\d+)?)px/)?.[1]);
+   assert.ok(line.y+fontSize<=overlay.band.height,`${line.text} should fit vertically inside the top band`);
+   assert.ok(fontSize*overlay.videoWidth/overlay.canvasWidth>=11,`${line.font} should remain legible at 480px: ${overlay.videoWidth}px video`);
+   assert.ok(line.width<=line.maxWidth,`${line.text} must fit without horizontal compression`);
+  }
+  const overlayText=overlay.lines.map(line=>line.text).join('\n');
+  assert.match(overlayText,/Dashboard disconnected|儀表板連線中斷/);
+  assert.match(overlayText,/Last data update|最後資料更新/);
+  await screenshot(fallback,'video-connection-disconnected');
+  await fallback.locator('#pipVideo').hover();
+  await screenshotElement(fallback.locator('#pipVideo'),'video-preview-480');
+  await fallback.evaluate(()=>__events.open());
+  assert.equal(await fallback.evaluate(()=>state.connection),'disconnected');
+  await fallback.evaluate(s=>__events.send({now:Date.now(),sessions:s}),sessions);
+  await fallback.waitForFunction(()=>state.connection==='connected');
   const colors=await fallback.evaluate(()=>{
    const data=popout.captureContext.getImageData(0,0,960,540).data;const values=new Set();
    for(let i=0;i<data.length;i+=160)values.add(`${data[i]},${data[i+1]},${data[i+2]}`);
@@ -231,6 +317,8 @@ async function drawnLogos(target) {
     await page.emulateMedia({colorScheme});
     await openSettings(page);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    const status=await page.locator('#conn').boundingBox();
+    assert.ok(status&&status.x>=0&&status.x+status.width<=width&&status.y+status.height<=800);
     const panel=await page.locator('#settingsPanel').boundingBox();
     assert.ok(panel.x>=0 && panel.x+panel.width<=width);
     await page.locator('#settingsMenu > summary').press('Escape');

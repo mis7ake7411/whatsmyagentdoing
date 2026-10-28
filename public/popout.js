@@ -5,11 +5,12 @@
   'use strict';
 
   class OfficePopout {
-    constructor({ preferences, office, text, changed }) {
+    constructor({ preferences, office, text, changed, connectionInfo }) {
       this.preferences = preferences;
       this.office = office;
       this.text = text;
       this.changed = changed;
+      this.connectionInfo = connectionInfo || (() => null);
       this.win = null;
       this.busy = false;
       this.stream = null;
@@ -136,11 +137,24 @@
       const w = this.captureCanvas.width, h = this.captureCanvas.height;
       c.fillStyle = office.pal.dark ? '#1e1e1c' : '#fff';
       c.fillRect(0, 0, w, h);
-      const scale = Math.min(w / office.canvas.width, h / office.canvas.height);
+      const bandHeight = 90;
+      const officeHeight = h - bandHeight;
+      const scale = Math.min(w / office.canvas.width, officeHeight / office.canvas.height);
       const dw = office.canvas.width * scale, dh = office.canvas.height * scale;
-      const x = (w - dw) / 2, y = (h - dh) / 2;
+      const x = (w - dw) / 2, y = bandHeight + (officeHeight - dh) / 2;
       if (office.gl) c.drawImage(office.gl.domElement, x, y, dw, dh);
       c.drawImage(office.canvas, x, y, dw, dh);
+      const info = this.connectionInfo();
+      if (info) {
+        c.fillStyle = 'rgba(0, 0, 0, .78)';
+        c.fillRect(0, 0, w, bandHeight);
+        c.fillStyle = '#fff';
+        c.textBaseline = 'top';
+        c.font = '600 28px ui-sans-serif, sans-serif';
+        c.fillText(info.previewStatus || info.status, 16, 8, w - 32);
+        c.font = '26px ui-sans-serif, sans-serif';
+        c.fillText(info.time, 16, 44, w - 32);
+      }
     }
 
     stopPreview() {
