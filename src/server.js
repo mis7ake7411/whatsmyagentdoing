@@ -28,8 +28,41 @@ function serveFile(res, root, rel) {
     return;
   }
   // no-cache: a reinstalled scene pack or an updated clone must show up on reload
-  res.writeHead(200, { 'content-type': type, 'cache-control': 'no-cache' });
-  fs.createReadStream(file).pipe(res);
+  serveStream(res, file, { 'content-type': type, 'cache-control': 'no-cache' });
+}
+
+function serveStream(res, file, headers) {
+  let stream;
+  const fail = (error) => {
+    if (stream && !stream.destroyed) stream.destroy();
+    if (res.destroyed) return;
+    if (res.headersSent) {
+      res.destroy();
+      return;
+    }
+    const status = error.code === 'ENOENT' || error.code === 'ENOTDIR' ? 404 : 500;
+    res.writeHead(status).end();
+  };
+
+  try {
+    stream = fs.createReadStream(file);
+  } catch (error) {
+    fail(error);
+    return;
+  }
+
+  stream.once('error', fail);
+  stream.once('open', () => {
+    if (res.destroyed) {
+      stream.destroy();
+      return;
+    }
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+    stream.pipe(res);
+  });
+  res.once('close', () => {
+    if (!res.writableFinished) stream.destroy();
+  });
 }
 const ACTIVE = new Set(['thinking', 'tool', 'typing']);
 const STALE_AFTER_MS = 600_000;
@@ -131,11 +164,12 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
       res.writeHead(403).end();
       return;
     }
-    const url = new URL(req.url, 'http://localhost');
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); }
+    catch { res.writeHead(400).end(); return; }
     if (STATIC[url.pathname]) {
       const [file, type] = STATIC[url.pathname];
-      res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
-      fs.createReadStream(path.join(PUBLIC, file)).pipe(res);
+      serveStream(res, path.join(PUBLIC, file), { 'content-type': type, 'cache-control': 'no-store' });
     } else if (Object.keys(MOUNTS).some((m) => url.pathname.startsWith(m))) {
       const m = Object.keys(MOUNTS).find((k) => url.pathname.startsWith(k));
       let rel;

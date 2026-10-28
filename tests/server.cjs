@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
-for (const scenario of ['assets', 'scenes', 'guards']) {
+for (const scenario of ['assets', 'scenes', 'guards', 'streams']) {
   test(`HTTP ${scenario}: malformed paths and resource boundaries`, t => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'wmad-server-'));
     t.after(() => fs.rmSync(home, { recursive: true, force: true }));
