@@ -45,7 +45,7 @@ function fixture(t, hours = 24) {
     fs.utimesSync(file, new Date(at), new Date(at));
     return { file, id };
   };
-  return { watcher, write, reads, blocked,
+  return { root, watcher, write, reads, blocked,
     advance: ms => { now += ms; },
     append(log, type, extra) {
       fs.appendFileSync(log.file, event(type, now, extra));
@@ -122,4 +122,34 @@ test('a large long-lived chat keeps head metadata and reads its current state fr
   assert.equal(session.status, 'done');
   assert.equal(session.reply, 'Latest reply in the tail');
   assert.equal(f.reads.filter(file => file === log.file).length, 2, 'read only the head and tail');
+});
+
+test('legacy Gemini documents reload when their size changes without an mtime change', t => {
+  const f = fixture(t);
+  const file = path.join(f.root, '.gemini/tmp/demo/chats/session-legacy.json');
+  const stamp = new Date(NOW);
+  const doc = { sessionId: 'legacy', messages: [
+    { type: 'user', timestamp: stamp.toISOString(), content: 'Read the configuration' },
+  ] };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(doc));
+  fs.utimesSync(file, stamp, stamp);
+  f.watcher.tick();
+  assert.equal(f.watcher.sessions().length, 1);
+  assert.equal(f.watcher.sessions()[0].status, 'thinking');
+  const before = fs.statSync(file);
+
+  doc.messages.push({ type: 'gemini', timestamp: stamp.toISOString(),
+    toolCalls: [{ name: 'read_file', status: 'executing', args: { path: 'config.json' } }],
+  });
+  fs.writeFileSync(file, JSON.stringify(doc));
+  fs.utimesSync(file, stamp, stamp);
+  const after = fs.statSync(file);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.ok(after.size > before.size);
+
+  f.watcher.tick();
+  assert.equal(f.watcher.sessions().length, 1);
+  assert.equal(f.watcher.sessions()[0].status, 'tool');
+  assert.equal(f.watcher.sessions()[0].activity, 'read_file config.json');
 });
