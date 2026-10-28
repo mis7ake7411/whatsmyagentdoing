@@ -212,8 +212,8 @@
     },
   };
 
-  // Existing locales keep working; new evidence labels fall back to English.
-  const evidenceLabels = {
+  // Existing locales keep working; new shared labels fall back to English.
+  const sharedLabels = {
     unknown: 'Status unknown', errors: 'Errors', observedStatus: 'Last observed status; not a live execution guarantee.',
     logTimeUnknown: 'Log time unavailable', lastLog: (t) => `Last log event: ${t} ago`,
     staleLog: (t) => `No new log events for ${t}; current state unconfirmed.`,
@@ -221,9 +221,12 @@
     staleCount: (n) => `${n} sessions have outdated activity information.`,
     pendingCount: (n) => `Needs your response (${n})`,
     unknownOffice: 'Not shown as resting agents; see List for details.',
+    pipQuiet: 'No agents need your attention, have errors or unknown status, or are working.',
+    notify: 'Notify on input requests, errors, or completed turns',
+    errorNote: (p) => `${p}: Error`,
   };
   for (const labels of Object.values(S)) {
-    for (const [key, value] of Object.entries(evidenceLabels)) labels[key] = value;
+    for (const [key, value] of Object.entries(sharedLabels)) labels[key] = value;
   }
   Object.assign(S['zh-TW'], {
     unknown: '狀態未知', errors: '錯誤', observedStatus: '顯示最後觀察到的狀態，不保證目前仍在執行。',
@@ -233,6 +236,9 @@
     staleCount: (n) => `${n} 個對話的活動資訊已過期。`,
     pendingCount: (n) => `需要你回應（${n} 項）`,
     unknownOffice: '不顯示為休息人物；詳情見列表。',
+    pipQuiet: '目前沒有需要回應、錯誤、狀態未知或工作中的 agent。',
+    notify: '需要你回應、錯誤或回合完成時通知',
+    errorNote: (p) => `${p}：錯誤`,
   });
 
   // Map a browser locale like "zh-HK" or "pt-BR" to one we have.

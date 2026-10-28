@@ -538,7 +538,7 @@ function render() {
     refreshTip();
     return;
   }
-  const groups = PIP ? GROUPS.slice(0, 2) : GROUPS;
+  const groups = PIP ? ['needsYou', 'errors', 'unknown', 'working'].map((key) => GROUPS.find((g) => g.key === key)) : GROUPS;
   if (!list.some((s) => groups.some((g) => groupOf(s) === g.key))) {
     main.innerHTML = `<div class="empty">${esc(PIP ? L.pipQuiet : L.empty)}</div>`;
     return;
@@ -569,10 +569,17 @@ function onData(data) {
     const pendingIds = (s.pendingRequests || []).map((r) => r.id);
     const newlyNeeds = needsInput(s) && (!before?.needsInput || pendingIds.some((id) => !before.pendingIds.includes(id)));
     const newlyDone = s.status === 'done' && before && before.status !== 'done';
-    if (!first && before && (newlyDone || newlyNeeds)) {
+    const newlyError = s.status === 'error' && before && before.status !== 'error';
+    if (!first && before && (newlyDone || newlyNeeds || newlyError)) {
       state.flash.add(s.key);
       if (!PIP && !s.subagent && window.Notification && Notification.permission === 'granted') {
-        try { new Notification(newlyNeeds ? `${s.project || s.agent}: ${L.waiting}` : L.doneNote(s.project || s.agent), { body: newlyNeeds ? (s.pendingRequests || []).map((r) => r.summary).filter(Boolean).join('\n') : s.reply || '', tag: s.key }); } catch {}
+        const project = s.project || s.agent;
+        const pendingSummary = (s.pendingRequests || []).map((r) => r.summary).filter(Boolean).join('\n');
+        const title = newlyError ? L.errorNote(project) : newlyNeeds ? `${project}: ${L.waiting}` : L.doneNote(project);
+        const body = newlyError
+          ? [s.error || s.activity || '', newlyNeeds ? pendingSummary : ''].filter(Boolean).join('\n')
+          : newlyNeeds ? pendingSummary : s.reply || '';
+        try { new Notification(title, { body, tag: s.key }); } catch {}
       }
     }
     state.prev.set(s.key, { status: s.status, needsInput: needsInput(s), pendingIds });

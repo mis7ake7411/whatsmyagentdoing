@@ -107,18 +107,50 @@ async function drawnLogos(target) {
   await openSettings(page);await page.selectOption('#langSel','zh-TW');await frame.waitForFunction(()=>langCode==='zh-TW');
   await openSettings(page);await page.click('#agentSeg [data-v=codex]');await frame.waitForFunction(()=>state.agent==='codex');
   await frame.click('#viewSeg [data-v=list]');await page.waitForFunction(()=>state.view==='list');
-  assert.equal(await frame.locator('section').count(),2);
-  assert.equal(await frame.locator('.card[data-s=done]').count(),0);
+  const compactSessions=[
+   {key:'codex:pending-error',id:'pending-error',agent:'codex',project:'pending-error',status:'error',error:'Permission denied',needsInput:true,pendingRequests:[{id:'q1',kind:'question',summary:'Choose a recovery action'}]},
+   {key:'codex:error',id:'error',agent:'codex',project:'error-project',status:'error',error:'Tool crashed'},
+   {key:'codex:unknown',id:'unknown',agent:'codex',project:'unknown-project',status:'unknown',lastEventAt:null},
+   {key:'codex:working',id:'working',agent:'codex',project:'working-project',status:'tool',activity:'Read: app.js'},
+   {key:'codex:done',id:'done',agent:'codex',project:'done-project',status:'done'},
+   {key:'codex:idle',id:'idle',agent:'codex',project:'idle-project',status:'idle'},
+  ].map(s=>({...s,lastEventAt:s.lastEventAt===null?null:s.lastEventAt??Date.now()-11*60*1000,turnStartedAt:Date.now()-1000,cwd:'/demo/'+s.project}));
+  await frame.evaluate(s=>{window.__events?.close();onData({now:Date.now(),sessions:s})},compactSessions);
+  await page.evaluate(s=>onData({now:Date.now(),sessions:s}),compactSessions);
+  await frame.waitForFunction(()=>document.querySelectorAll('.card[data-key]').length===4&&['codex:pending-error','codex:error','codex:unknown','codex:working'].every(key=>document.querySelector(`.card[data-key="${key}"]`)));
+  assert.equal(await frame.locator('section').count(),4);
+  assert.deepEqual((await frame.locator('section h2').allTextContents()).map(t=>t.trim().split(/\s+/)[0]),['需要你','錯誤','狀態未知','工作中']);
+  assert.equal(await frame.locator('.card[data-key="codex:pending-error"]').count(),1);
+  assert.equal(await frame.locator('.card[data-key="codex:pending-error"] .err').innerText(),'Permission denied');
+  assert.match(await frame.locator('.card[data-key="codex:pending-error"] .pending').innerText(),/Choose a recovery action/);
+  assert.equal(await frame.locator('.card[data-key="codex:error"] .err').innerText(),'Tool crashed');
+  assert.match(await frame.locator('.card[data-key="codex:unknown"] .evidence').innerText(),/日誌時間未知/);
+  assert.equal(await frame.locator('.card[data-key="codex:working"] .stale').isVisible(),true);
+  assert.equal(await frame.locator('.card[data-key="codex:done"],.card[data-key="codex:idle"]').count(),0);
+  assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.equal(await frame.locator('.card .agent.claude').count(),0);
   assert.equal(await frame.locator('.card .agent img').evaluateAll(imgs=>imgs.length>0&&imgs.every(img=>img.complete&&img.naturalWidth>0)),true);
   await screenshot(pip, 'pip-list');
-  check('preferences synchronize in both directions; compact list shows only attention/working sessions');
+  check('compact list keeps pending errors in Needs you and shows errors, unknown status, and fresh/stale evidence');
   const next=sessions.map(s=>s.key==='codex:sub'?{...s,status:'done',subagent:false}:s);
   await frame.evaluate(s=>onData({now:Date.now(),sessions:s}),next);
   await page.evaluate(s=>onData({now:Date.now(),sessions:s}),next);
   assert.equal(await frame.evaluate(()=>__notifications.length),0);
   assert.equal(await page.evaluate(()=>__notifications.length),1);
   check('only the main page emits completion notifications');
+  const recovering=compactSessions.map(s=>s.key==='codex:pending-error'?{...s,status:'tool',error:'',needsInput:false,pendingRequests:[],activity:'Run: retry'}:s);
+  await frame.evaluate(s=>onData({now:Date.now(),sessions:s}),recovering);
+  await page.evaluate(s=>onData({now:Date.now(),sessions:s}),recovering);
+  const failedAgain=recovering.map(s=>s.key==='codex:pending-error'?{...s,status:'error',error:'Could not connect to runner',needsInput:true,pendingRequests:[{id:'q2',kind:'question',summary:'Choose a recovery step'}]}:s);
+  await frame.evaluate(s=>onData({now:Date.now(),sessions:s}),failedAgain);
+  await page.evaluate(s=>onData({now:Date.now(),sessions:s}),failedAgain);
+  assert.equal(await frame.evaluate(()=>__notifications.length),0);
+  assert.equal(await page.evaluate(()=>__notifications.length),2);
+  assert.equal(await page.evaluate(()=>__notifications[1].title),'pending-error：錯誤');
+  const errorBody=await page.evaluate(()=>__notifications[1].options.body);
+  assert.match(errorBody,/Could not connect to runner/);
+  assert.match(errorBody,/Choose a recovery step/);
+  check('one main-page error notification keeps the error and simultaneous response together; PiP stays silent');
   await openSettings(page);await page.click('#agentSeg [data-v=all]');
   await frame.click('#viewSeg [data-v=office]');await openSettings(page);await page.check('#showAgent');await frame.click('#qualSeg [data-v=mid]');
   await frame.waitForFunction(()=>officeKind==='mid'&&office.framesShown>4);
