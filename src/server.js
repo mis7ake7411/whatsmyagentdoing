@@ -37,7 +37,7 @@ const STALE_AFTER_MS = 600_000;
 // Keep the last observed status and report silence separately as freshness.
 function view(s, now, { privacy }) {
   const lastEventAt = s.lastEventAt ?? s.mtime ?? null;
-  const quietMs = Number.isFinite(lastEventAt) ? Math.max(0, now - lastEventAt) : null;
+  const quiet = Number.isFinite(lastEventAt) ? Math.max(0, now - lastEventAt) : null;
   const status = s.status;
   const requests = Array.isArray(s.pendingRequests) ? s.pendingRequests : [];
   const pending = requests.map((request) => ({
@@ -47,7 +47,7 @@ function view(s, now, { privacy }) {
       ? (request.kind === 'approval' ? 'Approval requested' : 'Question requested')
       : (request.summary || (request.kind === 'approval' ? 'Approval requested' : 'Question requested')),
   }));
-  const stale = quietMs !== null && quietMs >= STALE_AFTER_MS
+  const stale = quiet !== null && quiet >= STALE_AFTER_MS
     && ['thinking', 'tool', 'typing', 'waiting', 'unknown'].includes(status);
 
   const out = {
@@ -64,7 +64,7 @@ function view(s, now, { privacy }) {
     status,
     pendingRequests: pending,
     needsInput: pending.length > 0 || status === 'waiting',
-    quietMs,
+    quietMs: quiet,
     stale,
     staleAfterMs: STALE_AFTER_MS,
     activity: status === 'tool' || status === 'waiting' ? s.activity : null,
