@@ -120,7 +120,7 @@ These improvements still depend on the log events available from each agent.
 Unlogged approvals, missing identifiers, or incompatible log formats may remain
 unconfirmed. They do not interrupt or control agent tasks.
 
-Regression checks use the existing Node runtime and its built-in test runner:
+These status regression checks are included in `npm run test:unit` and `npm test`. To run them alone with Node's built-in test runner:
 
 ```sh
 node --test tests/status.test.js tests/status-ui.test.js
@@ -135,9 +135,15 @@ node --test tests/status.test.js tests/status-ui.test.js
 
 ## Development checks
 
+Run `npm ci` from the repository root to install the locked development dependencies. With Node.js 20+ and Google Chrome installed, `npm test` runs all Node regression tests followed by the browser checks. The dashboard's runtime requirement remains Node.js 18+.
+
+`npm run test:unit` runs the server, custom status, UI status helpers, watcher and OMP tests without opening a browser. `npm run test:server` checks malformed URLs, file read failures and resource access boundaries. The existing `test:watcher` and `test:ui` commands remain available for focused checks.
+
+The personal fork's **Fork CI** workflow runs the same `npm test` command on Windows and Ubuntu with Node.js 24 and Google Chrome for pushes to `feature/myoffice` and pull requests targeting that branch. It installs dependencies from the lockfile and runs only in `mis7ake7411/whatsmyagentdoing`.
+
 `npm run test:watcher` runs isolated filesystem regression checks for session discovery, resumed old chats, the hours window, unreadable paths and large logs. It requires Node.js 18+ and never reads your real agent history.
 
-Browser development checks require Node.js 20+ (the dashboard itself still runs on Node.js 18+). Run `npm install`, then `npm run build` to rebuild the committed 3D bundle. With Google Chrome installed, `npm run test:ui` runs the browser regression checks against a temporary local server and made-up sessions. Use `WMAD_HEADED=1 npm run test:ui` to see the test windows, or set `WMAD_SCREENSHOTS` to an output folder to save screenshots. The checks cover logo rendering, compact views, settings synchronization, notifications, PiP recovery, video-stream cleanup and responsive settings in light and dark themes. They use Chrome; Firefox and Safari's native video controls still need manual testing.
+Run `npm run build` to rebuild the committed 3D bundle after changing its source. `npm run test:ui` runs the browser regression checks against a temporary local server and made-up sessions. Use `WMAD_HEADED=1 npm run test:ui` to see the test windows, or set `WMAD_SCREENSHOTS` to an output folder to save screenshots. The checks cover logo rendering, compact views, settings synchronization, notifications, PiP recovery, video-stream cleanup and responsive settings in light and dark themes. They use Chrome; Firefox and Safari's native video controls still need manual testing.
 
 ## License
 

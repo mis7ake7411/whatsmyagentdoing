@@ -41,6 +41,8 @@
   "scripts": {
     "build": "esbuild web/office3d.js --bundle --format=esm --minify --target=es2020 --outfile=public/office3d.js --legal-comments=eof",
     "start": "node bin/cli.js",
+    "test": "npm run test:unit && npm run test:ui",
+    "test:unit": "node --test tests/server.cjs tests/status.test.js tests/status-ui.test.js tests/watcher.cjs tests/omp.cjs",
     "test:ui": "node tests/ui.cjs",
     "test:watcher": "node --test tests/watcher.cjs tests/omp.cjs",
     "test:server": "node --test tests/server.cjs"
