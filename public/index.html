@@ -193,6 +193,32 @@
   .tog input:focus-visible { outline: 2px solid var(--tool); outline-offset: 2px; }
   .tog-note { margin: 0 2px 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
   .prefs-panel .setting-toggles:last-of-type { margin-bottom: 4px; }
+  .notify-categories { min-width: 0; margin: 8px 0 6px 10px; padding: 0 0 0 10px; border: 0; border-left: 2px solid var(--line); }
+  .notify-categories .setting-label { margin: 0 0 2px; }
+  .notify-categories .tog { padding-block: 6px !important; }
+  .notify-pause { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .notify-pause-row { display: flex; align-items: center; gap: 8px; }
+  .notify-pause-row select { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: inherit; }
+  .notify-pause-row .btn, .pip-project-heading .btn { padding: 6px 9px; font-size: 12px; }
+  .notify-pause #notifyPauseStatus { margin-top: 8px; }
+  .pip-preferences { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .pip-preferences > label.tog { padding-top: 0; }
+  .pip-project-heading { margin-top: 8px; }
+  .pip-project-list { display: grid; gap: 2px; max-height: 170px; overflow: auto; overscroll-behavior: contain; }
+  .pip-project-option { display: flex; align-items: flex-start; gap: 8px; padding: 6px 2px; color: var(--ink); font-size: 12px; cursor: pointer; }
+  .pip-project-option input { flex: none; margin: 2px 0 0; accent-color: var(--tool); }
+  .pip-project-option span { min-width: 0; overflow-wrap: anywhere; }
+  .pip-project-option small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+  .pip-project-option.unavailable { color: var(--muted); }
+  .pip-summary { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .pip-summary-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .pip-summary h2 { min-width: 0; margin: 0; font-size: 13px; color: var(--muted); }
+  .pip-summary-scope { flex: none; color: var(--muted); font-size: 10px; text-align: right; }
+  .pip-summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .pip-summary-item { min-width: 0; padding: 10px; border-radius: 9px; background: color-mix(in srgb, var(--ink) 5%, var(--panel)); }
+  .pip-summary-item span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+  .pip-summary-item b { display: block; margin-top: 3px; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .pip-summary .empty { margin-top: 10px; }
   /* ---- full-screen mode: the office fills the window, agents in a side panel */
   .ui-ico { stroke-width: 1.8; }
   .side, .side-tab { display: none; }
@@ -380,7 +406,9 @@
   body.pip .wrap { height: calc(100dvh - 16px); display: flex; flex-direction: column; }
   body.pip header { gap: 6px; margin-bottom: 8px; flex: none; }
   body.pip h1, body.pip .newver, body.pip #legend, body.pip .ver,
-  body.pip .controls > :not(#viewSeg):not(#qualSeg) { display: none !important; }
+  body.pip .controls > :not(#viewSeg):not(#qualSeg):not(#settingsMenu):not(#pipSummaryToggle) { display: none !important; }
+  body.pip.pip-summary-enabled #viewSeg, body.pip.pip-summary-enabled #qualSeg { display: none !important; }
+  body.pip.pip-summary-collapsed #summary { display: none !important; }
   body.pip .controls { width: auto; padding: 0; border: 0; }
   body.pip .chip { padding: 2px 6px; font-size: 11px; }
   body.pip .summary { gap: 4px; width: auto; margin-left: 0; }
@@ -418,6 +446,7 @@
       </details>
       <span class="toolbar-space" aria-hidden="true"></span>
       <button class="btn" id="pipBtn" hidden></button>
+      <button class="btn" id="pipSummaryToggle" type="button" hidden aria-expanded="false"></button>
       <details class="settings menu" id="todayMenu">
         <summary class="btn" aria-controls="todayPanel" data-a="today"><svg class="ui-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 20.5h17"/><rect x="5" y="11" width="3.2" height="7" rx="1"/><rect x="10.4" y="6" width="3.2" height="12" rx="1"/><rect x="15.8" y="13.5" width="3.2" height="4.5" rx="1"/></svg><span data-t="today"></span> <span class="today-tokens" id="todayTokens"></span></summary>
         <div class="settings-panel today-panel" id="todayPanel"></div>
@@ -445,8 +474,37 @@
             <label class="tog" id="agentBadgeToggle"><span data-t="showAgent"></span><input type="checkbox" role="switch" id="showAgent"></label>
             <label class="tog" id="soundToggle"><span data-t="sound"></span><input type="checkbox" role="switch" id="sound"></label>
             <label class="tog" id="notifyToggle"><span data-t="notify"></span><input type="checkbox" role="switch" id="notify"></label>
+              <fieldset class="notify-categories">
+                <legend class="setting-label" data-t="notifyCategories"></legend>
+              <label class="tog"><span data-t="notifyNeeds"></span><input type="checkbox" role="switch" id="notifyNeeds"></label>
+              <label class="tog"><span data-t="notifyErrors"></span><input type="checkbox" role="switch" id="notifyErrors"></label>
+              <label class="tog"><span data-t="notifyDone"></span><input type="checkbox" role="switch" id="notifyDone"></label>
+              </fieldset>
           </div>
           <p class="tog-note" id="notifyNote" data-t="notifyBlocked" hidden></p>
+          <div class="notify-pause">
+            <label class="setting-label" id="notifyPauseLabel" for="notifyPause" data-t="notifyPause"></label>
+            <div class="notify-pause-row">
+              <select id="notifyPause" aria-labelledby="notifyPauseLabel">
+                <option value="" data-t="notifyPauseChoose"></option>
+                <option value="15" data-t="notifyPause15"></option>
+                <option value="30" data-t="notifyPause30"></option>
+                <option value="60" data-t="notifyPause60"></option>
+              </select>
+              <button class="btn" id="notifyResume" type="button" data-t="notifyResume"></button>
+            </div>
+            <p class="tog-note" id="notifyPauseStatus" aria-live="polite" hidden></p>
+          </div>
+          <div class="pip-preferences">
+            <label class="tog"><span data-t="pipSummaryToggle"></span><input type="checkbox" role="switch" id="pipSummary"></label>
+            <div class="setting-row pip-project-heading">
+              <span class="setting-label" id="pipProjectsTitle" data-t="pipProjectsLabel"></span>
+              <button class="btn" id="pipClearProjects" type="button" data-t="pipClearProjects"></button>
+            </div>
+            <p class="tog-note" data-t="pipProjectsHint"></p>
+            <div class="pip-project-list" id="pipProjectsList" role="group" aria-labelledby="pipProjectsTitle"></div>
+            <p class="tog-note" id="pipProjectStatus" aria-live="polite"></p>
+          </div>
         </div>
       </details>
     </div>
@@ -528,17 +586,22 @@ const store = (() => {
   return { get, set };
 })();
 
-const PREF_DEFAULTS = { view: 'office', quality: 'mid', scene: 'office', agents: [], showSub: false, showIdle: false, showAgent: true, sound: false, notify: true, side: true, lang: 'auto' };
+const PREF_DEFAULTS = { view: 'office', quality: 'mid', scene: 'office', agents: [], showSub: false, showIdle: false, showAgent: true, sound: false, notify: true, notifyNeeds: true, notifyErrors: true, notifyDone: true, notifyPausedUntil: 0, pipSummary: false, pipProjects: [], side: true, lang: 'auto' };
 function validAgentId(v) {
   return typeof v === 'string' && v !== 'all' && /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(v) && !Object.hasOwn(Object.prototype, v);
+}
+function validPipProjectKey(v) {
+  return typeof v === 'string' && v.length <= 8192 && /^(?:cwd:|session:)[^\u0000-\u001f\u007f]+$/.test(v);
 }
 function validPreference(k, v) {
   if (!Object.hasOwn(PREF_DEFAULTS, k)) return false;
   if (typeof PREF_DEFAULTS[k] === 'boolean') return typeof v === 'boolean';
+  if (k === 'notifyPausedUntil') return Number.isFinite(v) && v >= 0;
   if (k === 'view') return ['office', 'list'].includes(v);
   if (k === 'quality') return ['mid', 'high'].includes(v);
   // Which agents to show; none selected means all of them.
   if (k === 'agents') return Array.isArray(v) && v.length <= 32 && v.every(validAgentId);
+  if (k === 'pipProjects') return Array.isArray(v) && v.length <= 64 && new Set(v).size === v.length && v.every(validPipProjectKey);
   if (k === 'lang') return v === 'auto' || Object.hasOwn(I18N, v);
   return typeof v === 'string' && /^[a-z0-9-]+$/.test(v);
 }
@@ -580,6 +643,7 @@ const state = {
   skew: 0,
   prev: new Map(),
   flash: new Set(),
+  pipSummaryExpanded: false,
 };
 let popout = null;
 
@@ -601,6 +665,69 @@ const GROUPS = [
   { key: 'unknown', color: 'muted' },
   { key: 'idle', color: 'idle' },
 ];
+
+function projectKey(s) {
+  if (typeof s.cwd === 'string' && s.cwd.trim()) {
+    let cwd = s.cwd.trim();
+    if (/^[a-z]:[\\/]/i.test(cwd)) cwd = cwd[0].toLowerCase() + cwd.slice(1).replace(/\\/g, '/').toLowerCase();
+    else if (/^(?:\\\\|\/\/)/.test(cwd)) cwd = `//${cwd.slice(2).replace(/[\\/]+/g, '/')}`;
+    if (cwd.length > 8188) {
+      let a = 2166136261, b = 0x9e3779b9;
+      for (let i = 0; i < cwd.length; i++) { a = Math.imul(a ^ cwd.charCodeAt(i), 16777619); b = Math.imul(b ^ cwd.charCodeAt(i), 2246822519); }
+      cwd = `long-${(a >>> 0).toString(16)}${(b >>> 0).toString(16)}`;
+    }
+    return `cwd:${cwd}`;
+  }
+  const identity = s.sessionId || s.id || s.key || 'unknown';
+  const key = `session:${encodeURIComponent(String(s.agent || 'agent'))}:${encodeURIComponent(String(identity))}`;
+  if (key.length <= 8192) return key;
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+  return `session:long-${(hash >>> 0).toString(16)}`;
+}
+function projectCatalog() {
+  const projects = new Map();
+  for (const s of state.data.sessions) {
+    const key = projectKey(s);
+    const cwd = typeof s.cwd === 'string' ? s.cwd : '';
+    const fallbackName = cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+    const name = s.project || fallbackName || AGENT_NAME[s.agent] || s.agent || L.pipUnavailable;
+    if (!projects.has(key)) projects.set(key, { key, name, cwd, count: 0 });
+    projects.get(key).count++;
+  }
+  return projects;
+}
+let pipProjectsMarkup = null;
+function renderPipProjectChoices() {
+  const root = document.getElementById('pipProjectsList');
+  if (!root) return;
+  const active = document.activeElement;
+  const focusedKey = active && root.contains(active) ? active.dataset.pipProject : null;
+  const scrollTop = root.scrollTop;
+  const projects = projectCatalog();
+  for (const key of state.pipProjects) if (!projects.has(key)) {
+    const unavailable = key.startsWith('cwd:') ? key.slice(4) : (() => {
+      const [, agent = '', id = ''] = key.split(':');
+      try { return L.pipUnavailableSession(decodeURIComponent(agent), decodeURIComponent(id)); }
+      catch { return L.pipUnavailableSession(agent, id); }
+    })();
+    projects.set(key, { key, name: L.pipUnavailable, cwd: unavailable, count: 0, unavailable: true });
+  }
+  const markup = !projects.size ? `<p class="tog-note">${esc(L.pipNoProjects)}</p>` : [...projects.values()].sort((a, b) => a.name.localeCompare(b.name) || a.cwd.localeCompare(b.cwd) || a.key.localeCompare(b.key)).map((p) =>
+    `<label class="pip-project-option${p.unavailable ? ' unavailable' : ''}"><input type="checkbox" data-pip-project="${esc(p.key)}"${state.pipProjects.includes(p.key) ? ' checked' : ''}><span>${esc(p.name)}${p.cwd ? `<small>${esc(p.cwd)}</small>` : ''}</span></label>`
+  ).join('');
+  if (pipProjectsMarkup === markup) return;
+  pipProjectsMarkup = markup;
+  root.innerHTML = markup;
+  root.scrollTop = scrollTop;
+  if (focusedKey) {
+    const target = [...root.querySelectorAll('[data-pip-project]')].find((input) => input.dataset.pipProject === focusedKey);
+    target?.focus({ preventScroll: true });
+  }
+}
+function pipProjectMatches(s) {
+  return !PIP || !state.pipProjects.length || state.pipProjects.includes(projectKey(s));
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -735,6 +862,7 @@ const matchAgent = (s) => !state.agents.length || state.agents.includes(s.agent)
 function visible() {
   return state.data.sessions.filter((s) =>
     matchAgent(s) &&
+    pipProjectMatches(s) &&
     (state.showSub || !s.subagent) &&
     (state.showIdle || s.status !== 'idle' || needsInput(s)));
 }
@@ -742,10 +870,13 @@ function visible() {
 function render() {
   const now = Date.now() - state.skew;
   const list = visible();
-  const all = state.data.sessions.filter((s) => matchAgent(s) && (state.showSub || !s.subagent));
+  const all = state.data.sessions.filter((s) => matchAgent(s) && pipProjectMatches(s) && (state.showSub || !s.subagent));
 
   const count = (key) => all.filter((s) => groupOf(s) === key).length;
-  document.getElementById('summary').innerHTML = GROUPS.filter((g, i) => i < 3 || (g.key !== 'idle' && count(g.key))).map((g) => {
+  const summaryGroups = PIP && state.pipSummary
+    ? ['needsYou', 'errors', 'unknown', 'working'].map((key) => GROUPS.find((g) => g.key === key))
+    : GROUPS.filter((g, i) => i < 3 || (g.key !== 'idle' && count(g.key)));
+  document.getElementById('summary').innerHTML = summaryGroups.map((g) => {
     const n = count(g.key);
     const color = `var(--${g.color})`;
     return `<span class="chip"><span class="dot" style="color:${color}"></span>${L[g.key]} <b>${n}</b></span>`;
@@ -758,15 +889,18 @@ function render() {
   document.title = (needs ? `(${needs}!) ` : working ? `(${working}) ` : '') + L.title;
 
   const main = document.getElementById('main');
-  const officeMode = state.view === 'office' || state.full;
-  document.getElementById('officeWrap').style.display = officeMode ? '' : 'none';
+  const summaryMode = PIP && state.pipSummary && !state.pipSummaryExpanded;
+  const summaryListMode = PIP && state.pipSummary && state.pipSummaryExpanded;
+  const officeMode = !summaryListMode && (state.view === 'office' || state.full);
+  document.getElementById('officeWrap').style.display = officeMode && !summaryMode ? '' : 'none';
   // The office decides who sits at a desk and who wanders around.
   // Unknown is not a resting agent. Keep it in the evidence summary/List;
   // pending input uses the existing waving animation without overwriting data.
   const officeList = all.filter((s) => s.status !== 'unknown' || needsInput(s))
     .map((s) => needsInput(s) ? { ...s, status: 'waiting' } : s);
   const staleCount = all.filter((s) => freshness(s, now).stale).length;
-  document.getElementById('officeSignals').innerHTML = officeMode ? [
+  document.getElementById('officeSignals').style.display = summaryMode ? 'none' : '';
+  document.getElementById('officeSignals').innerHTML = officeMode && !summaryMode ? [
     `<span>${esc(L.observedStatus)}</span>`,
     staleCount ? `<span>${esc(L.staleCount(staleCount))} ${esc(L.staleMeaning)}</span>` : '',
     count('unknown') ? `<span>${esc(L.unknown)}: ${count('unknown')} · ${esc(L.unknownOffice)}</span>` : '',
@@ -776,8 +910,8 @@ function render() {
   // all walking in through the door.
   if (office && state.loaded) {
     office.showAgent = state.showAgent;
-    office.setVisible(officeMode && !poppedOut);
-    office.update(officeList);
+    office.setVisible(officeMode && !poppedOut && !summaryMode);
+    if (!summaryMode && !summaryListMode) office.update(officeList);
   }
   const agents = new Set(officeList.map(s => s.agent));
   const legend = document.getElementById('agentLegend');
@@ -792,6 +926,16 @@ function render() {
     hideTip();
     return;
   }
+  if (summaryMode) {
+    document.getElementById('officeWrap').style.display = 'none';
+    const keys = ['needsYou', 'errors', 'unknown', 'working'];
+    const selected = all.length;
+    const empty = state.pipProjects.length && !selected
+      ? `<div class="empty" data-pip-no-matches>${esc(L.pipNoMatches)} <button class="btn" data-pip-clear type="button">${esc(L.pipClearProjects)}</button></div>`
+      : !selected ? `<div class="empty">${esc(L.pipSummaryEmpty)}</div>` : '';
+    main.innerHTML = `<div class="pip-summary"><div class="pip-summary-heading"><h2>${esc(L.pipSummaryTitle)}</h2><span class="pip-summary-scope" data-pip-scope>${esc(L.pipProjectScope(state.pipProjects.length))}</span></div><div class="pip-summary-grid">${keys.map((key) => `<div class="pip-summary-item" data-group="${key}"><span>${esc(L[key])}</span><b><strong>${count(key)}</strong></b></div>`).join('')}</div>${empty}</div>`;
+    return;
+  }
   if (officeMode) {
     main.innerHTML = officeList.length ? '' : `<div class="empty">${esc(L.empty)}</div>`;
     document.getElementById('officeWrap').style.display = officeList.length || state.full ? '' : 'none';
@@ -800,7 +944,9 @@ function render() {
   }
   const groups = PIP ? ['needsYou', 'errors', 'unknown', 'working'].map((key) => GROUPS.find((g) => g.key === key)) : GROUPS;
   if (!list.some((s) => groups.some((g) => groupOf(s) === g.key))) {
-    main.innerHTML = `<div class="empty">${esc(PIP ? L.pipQuiet : L.empty)}</div>`;
+    main.innerHTML = PIP && state.pipProjects.length && !all.length
+      ? `<div class="empty" data-pip-no-matches>${esc(L.pipNoMatches)} <button class="btn" data-pip-clear type="button">${esc(L.pipClearProjects)}</button></div>`
+      : `<div class="empty">${esc(PIP ? L.pipQuiet : L.empty)}</div>`;
     return;
   }
   main.innerHTML = groups.map((g) => {
@@ -812,6 +958,7 @@ function render() {
 
 function tickTimes() {
   if (tipKey) refreshTip();
+  renderNotifyPauseStatus();
   const now = Date.now() - state.skew;
   const byKey = new Map(state.data.sessions.map((s) => [s.key, s]));
   document.querySelectorAll('[data-time]').forEach((el) => {
@@ -823,6 +970,7 @@ function tickTimes() {
 
 let connectionDateFormatter = null;
 let connectionDateFormatterLocale = '';
+let pauseTimeCache = { until: 0, locale: '', zone: 0, text: '' };
 let connectionDateText = { at: null, locale: '', value: '' };
 function formatConnectionDate(at) {
   if (connectionDateText.at === at && connectionDateText.locale === L.html) return connectionDateText.value;
@@ -891,16 +1039,21 @@ function onData(data) {
     const newlyError = s.status === 'error' && before && before.status !== 'error';
     if (!first && before && (newlyDone || newlyNeeds || newlyError)) {
       state.flash.add(s.key);
-      if (!PIP && !s.subagent && state.notify && window.Notification && Notification.permission === 'granted') {
+      const paused = Number.isFinite(state.notifyPausedUntil) && state.notifyPausedUntil > Date.now();
+      const category = paused ? null
+        : newlyError && state.notifyErrors ? 'error'
+          : newlyNeeds && state.notifyNeeds ? 'needs'
+            : newlyDone && state.notifyDone ? 'done' : null;
+      if (!PIP && !s.subagent && category && state.notify && window.Notification && Notification.permission === 'granted') {
         const project = s.project || s.agent;
         const pendingSummary = (s.pendingRequests || []).map((r) => r.summary).filter(Boolean).join('\n');
-        const title = newlyError ? L.errorNote(project) : newlyNeeds ? `${project}: ${L.waiting}` : L.doneNote(project);
-        const body = newlyError
+        const title = category === 'error' ? L.errorNote(project) : category === 'needs' ? `${project}: ${L.waiting}` : L.doneNote(project);
+        const body = category === 'error'
           ? [s.error || s.activity || '', newlyNeeds ? pendingSummary : ''].filter(Boolean).join('\n')
-          : newlyNeeds ? pendingSummary : s.reply || '';
+          : category === 'needs' ? pendingSummary : s.reply || '';
         try { new Notification(title, { body, tag: s.key }); } catch {}
       }
-      if (!PIP && !s.subagent && state.sound) chime(newlyDone && !newlyNeeds && !newlyError ? 'done' : 'attention');
+      if (!PIP && !s.subagent && category && state.sound) chime(category === 'done' ? 'done' : 'attention');
     }
     state.prev.set(s.key, { status: s.status, needsInput: needsInput(s), pendingIds });
   }
@@ -985,6 +1138,22 @@ soundBox.addEventListener('change', () => {
 showAgent.addEventListener('change', () => { state.showAgent = showAgent.checked; store.set('showAgent', state.showAgent); syncControls(); render(); });
 
 const notifyBtn = document.getElementById('notify');
+function renderNotifyPauseStatus() {
+  const status = document.getElementById('notifyPauseStatus');
+  const until = Number.isFinite(state.notifyPausedUntil) ? state.notifyPausedUntil : 0;
+  const remaining = until - Date.now();
+  const hidden = remaining <= 0;
+  if (status.hidden !== hidden) status.hidden = hidden;
+  const resume = document.getElementById('notifyResume');
+  resume.disabled = remaining <= 0;
+  if (remaining <= 0) { if (status.textContent) status.textContent = ''; return; }
+  const zone = new Date().getTimezoneOffset();
+  if (pauseTimeCache.until !== until || pauseTimeCache.locale !== L.html || pauseTimeCache.zone !== zone) {
+    pauseTimeCache = { until, locale: L.html, zone, text: new Date(until).toLocaleTimeString(L.html, { hour: 'numeric', minute: '2-digit' }) };
+  }
+  const message = L.notifyPauseStatus(pauseTimeCache.text, Math.ceil(remaining / 60000));
+  if (status.textContent !== message) status.textContent = message;
+}
 function syncControls() {
   const view = state.full ? 'office' : state.view;
   document.querySelectorAll('#viewSeg button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.view));
@@ -996,6 +1165,18 @@ function syncControls() {
   showIdle.checked = state.showIdle;
   soundBox.checked = state.sound;
   showAgent.checked = state.showAgent;
+  document.getElementById('notifyNeeds').checked = state.notifyNeeds;
+  document.getElementById('notifyErrors').checked = state.notifyErrors;
+  document.getElementById('notifyDone').checked = state.notifyDone;
+  document.getElementById('pipSummary').checked = state.pipSummary;
+  document.getElementById('pipSummaryToggle').hidden = !PIP || !state.pipSummary;
+  document.getElementById('pipSummaryToggle').textContent = state.pipSummaryExpanded ? L.pipCollapse : L.pipExpand;
+  document.getElementById('pipSummaryToggle').setAttribute('aria-expanded', String(!!state.pipSummaryExpanded));
+  document.body.classList.toggle('pip-summary-enabled', !!(PIP && state.pipSummary));
+  document.body.classList.toggle('pip-summary-collapsed', !!(PIP && state.pipSummary && !state.pipSummaryExpanded));
+  document.getElementById('pipClearProjects').disabled = !state.pipProjects.length;
+  renderPipProjectChoices();
+  renderNotifyPauseStatus();
   document.getElementById('agentBadgeToggle').style.display = view === 'office' ? '' : 'none';
   popout?.sync(PIP, view);
   // On only when both the switch and the browser allow it; blocked shows how to unblock.
@@ -1013,6 +1194,62 @@ notifyBtn.addEventListener('change', async () => {
   store.set('notify', notifyBtn.checked);
   syncControls();
 });
+for (const [id, key] of [['notifyNeeds', 'notifyNeeds'], ['notifyErrors', 'notifyErrors'], ['notifyDone', 'notifyDone']]) {
+  document.getElementById(id).addEventListener('change', (e) => {
+    state[key] = e.currentTarget.checked;
+    store.set(key, state[key]);
+  });
+}
+document.getElementById('notifyPause').addEventListener('change', (e) => {
+  const minutes = Number(e.currentTarget.value);
+  if ([15, 30, 60].includes(minutes)) {
+    state.notifyPausedUntil = Date.now() + minutes * 60000;
+    store.set('notifyPausedUntil', state.notifyPausedUntil);
+  }
+  e.currentTarget.value = '';
+  renderNotifyPauseStatus();
+});
+document.getElementById('notifyResume').addEventListener('click', () => {
+  state.notifyPausedUntil = 0;
+  store.set('notifyPausedUntil', 0);
+  renderNotifyPauseStatus();
+});
+document.getElementById('pipSummary').addEventListener('change', (e) => {
+  state.pipSummary = e.currentTarget.checked;
+  state.pipSummaryExpanded = false;
+  store.set('pipSummary', state.pipSummary);
+  syncControls(); render();
+});
+document.getElementById('pipSummaryToggle').addEventListener('click', () => {
+  if (!PIP || !state.pipSummary) return;
+  state.pipSummaryExpanded = !state.pipSummaryExpanded;
+  syncControls(); render();
+});
+document.getElementById('pipProjectsList').addEventListener('change', (e) => {
+  const input = e.target.closest('[data-pip-project]');
+  if (!input) return;
+  const key = input.dataset.pipProject;
+  const next = input.checked
+    ? [...new Set([...state.pipProjects, key])]
+    : state.pipProjects.filter((item) => item !== key);
+  if (next.length > 64 || !validPreference('pipProjects', next)) {
+    input.checked = false;
+    document.getElementById('pipProjectStatus').textContent = L.pipProjectLimit;
+    return;
+  }
+  document.getElementById('pipProjectStatus').textContent = '';
+  state.pipProjects = next;
+  store.set('pipProjects', next);
+  syncControls(); render();
+});
+function clearPipProjects() {
+  state.pipProjects = [];
+  store.set('pipProjects', []);
+  document.getElementById('pipProjectStatus').textContent = '';
+  syncControls(); render();
+}
+document.getElementById('pipClearProjects').addEventListener('click', clearPipProjects);
+document.addEventListener('click', (e) => { if (e.target.closest('[data-pip-clear]')) clearPipProjects(); });
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-copy]'); if (!b) return;
@@ -1240,7 +1477,9 @@ popout = new OfficePopout({
 // sync even when changes come from the compact window or another open tab.
 window.addEventListener('storage', (e) => {
   if (e.key !== null && !Object.keys(PREF_DEFAULTS).some((k) => e.key === 'wmad.' + k)) return;
-  Object.assign(state, readPreferences());
+  const preferences = readPreferences();
+  if (preferences.pipSummary !== state.pipSummary) state.pipSummaryExpanded = false;
+  Object.assign(state, preferences);
   renderLangMenu();
   hideTip();
   applyLang(chooseLang(state.data.lang));

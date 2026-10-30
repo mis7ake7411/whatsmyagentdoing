@@ -57,7 +57,7 @@ The UI speaks English, 繁體中文, 简体中文, 日本語, 한국어, Españo
 
 In the agent panel and compact views, sessions are grouped into **Needs you → Working → Finished**, with **Errors** and **Status unknown** shown when present. Cards and details show the current-turn timer, last-log age, pending requests, and a resume command when the client supports one. The toolbar can filter any mix of clients and show subagents or idle sessions. The tab title shows how many agents are working.
 
-**Alerts:** when an agent needs you (a question, an approval or an error) or completes a turn, the main page can send a browser notification and, with **Settings → Sound**, play a short chime. An unchanged log is marked stale after 10 minutes. Staleness describes the age of the last log event; the dashboard keeps the last observed status and does not infer that an agent is done, idle or stuck from silence. Pending requests remain visible until the log reports a resolution.
+**Alerts:** when an agent needs you (a question, an approval or an error) or completes a turn, the main page can send a browser notification and, with **Settings → Sound**, play a short chime. Settings let you choose which of those three categories trigger alerts and pause notifications for 15, 30 or 60 minutes. Desktop notifications and sound have independent master switches. An unchanged log is marked stale after 10 minutes. Staleness describes the age of the last log event; the dashboard keeps the last observed status and does not infer that an agent is done, idle or stuck from silence. Pending requests remain visible until the log reports a resolution.
 
 **Today:** the Today panel adds up today's turns and tokens by agent and by project, from Claude Code and Codex usage records since local midnight. Each card also shows how full the model's context window is (amber from 60%, red from 85%). Very large logs are read head + tail, so their counts can be low.
 
@@ -65,9 +65,9 @@ In the agent panel and compact views, sessions are grouped into **Needs you → 
 
 **Agent badges:** in both 2D and 3D, each provider's logo identifies its agents beside their names, including subagents. The same icons appear in the legend, list cards and filters. Open **Settings → Agent badges** to hide the office markers and legend; your choice is saved. Icons are bundled locally, with initials as a fallback if an image cannot load. See [icon sources and attribution](assets/agents/README.md).
 
-The toolbar keeps the view, 2D/3D and pop-out controls visible. Scene selection, agent filters, display options, notifications and language are grouped under **Settings**.
+The toolbar keeps the view, 2D/3D and pop-out controls visible. Scene, agent-filter and language menus are in the toolbar. Display options and notification settings are under **Settings**. Settings can opt into a compact PiP summary; expanding it opens the matching session list. A PiP-only project filter leaves the main dashboard and its notifications unchanged.
 
-**Pop out:** browsers with the [Document Picture-in-Picture API](https://developer.chrome.com/docs/web-platform/document-picture-in-picture) can open the office or list in an interactive, always-on-top window. The compact list shows **Needs you**, **Errors**, **Status unknown** and **Working**; a session needing a response appears once under **Needs you**. View, quality, scene, filters, language and badge settings stay in sync with the main tab when browser storage is available. Closing the pop-out restores the main view, and only the main tab sends notifications.
+**Pop out:** browsers with the [Document Picture-in-Picture API](https://developer.chrome.com/docs/web-platform/document-picture-in-picture) can open the office or list in an interactive, always-on-top window. The compact list shows **Needs you**, **Errors**, **Status unknown** and **Working**; a session needing a response appears once under **Needs you**. Settings can enable a count summary and limit the pop-out to selected projects; expanding the summary shows the matching list without changing the saved office/list view. View, quality, scene, filters, language and badge settings stay in sync with the main tab when browser storage is available. Closing the pop-out restores the main view, and only the main tab sends notifications.
 
 When Document PiP isn't available, **Pop out** in office view starts a local, view-only video preview of the 2D or 3D office. Use its video PiP button, or the browser's own video controls/context menu (such as Firefox's), to float it. Stop the preview when finished. No screen-sharing permission is needed and no video is uploaded. Background animation may run at a lower frame rate, depending on browser throttling; this fallback doesn't support list cards or clicking agents.
 
@@ -129,8 +129,9 @@ Kimi's `turn.ended` / `agent.turn.ended`, DSH's `turn/end` and Grok's
 model calls, finished tools and background subtasks never mark the main turn
 Done. Kimi interaction requests and DSH approval requests show Waiting for you.
 Grok's persisted tool Pending state does not prove an approval wait, so it
-remains Running. A reply without a terminal turn event eventually becomes
-Idle, never Done merely from a timeout.
+remains Running. A reply without a terminal turn event does not prove the task
+has stopped; the dashboard keeps the last observed status and marks old log
+activity stale instead of inferring Idle or Done from silence.
 
 Kimi and Grok logs are replayed in full on discovery, in bounded read blocks,
 then tailed incrementally. Skipping the middle would lose pending tools and
@@ -178,8 +179,9 @@ previews and resume command. Magpie only fills missing metadata and parent
 relationships; it never overwrites the local tracker.
 
 For gateway-only sessions, an unfinished foreground model request means
-**Thinking**. Between requests the state is **Idle**, not **Done**: a request
-ending does not prove the agent finished its turn or task. Title, guardian and
+**Thinking**. Between requests the status is **Unknown**: Magpie does not expose
+enough lifecycle evidence to label the session Idle or Done. A request ending
+does not prove the agent finished its turn or task. Title, guardian and
 compaction helper requests are ignored. Magpie's current web API does not
 expose tool execution, approval waits or reliable turn-completion events;
 native logs are needed for those states. The transcript API is not polled

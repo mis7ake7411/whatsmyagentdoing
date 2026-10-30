@@ -20,6 +20,17 @@
       title: "What's my agent doing", office: 'Office', list: 'List', wentHome: 'went home', qMid: '2D', qHigh: '3D',
       loading3d: 'Loading 3D office…', loading2d: 'Setting up the office…', failed3d: "Couldn't load the 3D office — showing Medium instead.",
       all: 'All', subagents: 'Subagents', showIdle: 'Idle', notify: "Desktop notifications", notifyBlocked: "Notifications are blocked for this page. Allow them in the site settings next to the address bar.", notifyOn: 'Notifications on', sound: 'Sound', stuck: (m) => `No progress for ${m} min`, today: "Today", turnsL: "turns", tokensL: "tokens", agentsL: "agents", context: "Context", topProjects: "Busiest projects", summaryNote: "Counted from local logs since midnight. Very large logs are only partly read.", noUsage: "Nothing recorded yet today.", agentsTitle: "Agents", recent: "Recent conversation", noMessages: "No messages in the recent log.", back: "Back", hidePanel: "Hide panel", showPanel: "Show agents", modelL: "Model", folderL: "Folder", privateNote: "Started with --private: conversations are hidden.", loadingMsgs: "Loading…", disconnected: 'Disconnected — retrying…',
+      notifyCategories: 'Notify me about', notifyNeeds: 'Input requests', notifyErrors: 'Errors', notifyDone: 'Completed turns',
+      notifyPause: 'Pause notifications', notifyPauseChoose: 'Choose a duration', notifyPause15: '15 minutes', notifyPause30: '30 minutes', notifyPause60: '60 minutes',
+      notifyResume: 'Resume notifications', notifyPauseStatus: (time, minutes) => `Paused until ${time} (${minutes} min remaining)`,
+      pipSummaryToggle: 'Compact summary in PiP', pipSummaryTitle: 'Agent summary', pipExpand: 'Expand list', pipCollapse: 'Back to summary',
+      pipProjectScope: (count) => count ? `${count} projects selected` : 'All projects',
+      pipProjectsLabel: 'Projects to show in PiP', pipProjectsHint: 'Select projects to limit the PiP. Leave none selected to include all.',
+      pipNoProjects: 'No projects are available in this snapshot.', pipNoMatches: 'No sessions match the selected projects.',
+      pipClearProjects: 'Show all projects', pipUnavailable: 'Unavailable',
+      pipProjectLimit: 'Select up to 64 projects.',
+      pipUnavailableSession: (agent, id) => `Unavailable session — ${agent} / ${id}`,
+      pipSummaryEmpty: 'No agents need you, have errors, are unknown, or are working.',
       needsYou: 'Needs you', working: 'Working', finished: 'Completed turns', idle: 'Idle',
       thinking: 'Thinking', tool: 'Running', typing: 'Writing reply', waiting: 'Waiting for you', done: 'Turn completed', interrupted: 'Interrupted', error: 'Error',
       copy: 'Copy resume cmd', copied: 'Copied ✓', sub: 'subagent', auto: 'Auto',
@@ -43,6 +54,17 @@
       title: '我的 Agent 在幹嘛', office: '辦公室', list: '列表', wentHome: '已下班', qMid: '2D', qHigh: '3D',
       loading3d: '正在載入 3D 辦公室…', loading2d: '正在佈置辦公室…', failed3d: '3D 辦公室載入失敗，先用中畫質顯示。',
       all: '全部', subagents: '子 agent', showIdle: '閒置', notify: "桌面通知", notifyBlocked: "瀏覽器封鎖了這個頁面的通知，請在網址列旁的網站設定裡允許。", notifyOn: '通知已開', sound: '提示音', stuck: (m) => `${m} 分鐘沒有進展`, today: "今日", turnsL: "輪", tokensL: "tokens", agentsL: "個 agent", context: "Context", topProjects: "最忙的專案", summaryNote: "從午夜起的本機 log 統計；非常大的 log 只會讀一部分。", noUsage: "今天還沒有紀錄。", agentsTitle: "Agent 列表", recent: "最近對話", noMessages: "最近的 log 裡沒有訊息。", back: "返回", hidePanel: "收起側欄", showPanel: "顯示 Agent", modelL: "模型", folderL: "資料夾", privateNote: "以 --private 啟動：對話內容已隱藏。", loadingMsgs: "載入中…", disconnected: '連線中斷，重試中…',
+      notifyCategories: '通知類別', notifyNeeds: '需要回應', notifyErrors: '錯誤', notifyDone: '回合完成',
+      notifyPause: '暫停通知', notifyPauseChoose: '選擇暫停時間', notifyPause15: '15 分鐘', notifyPause30: '30 分鐘', notifyPause60: '60 分鐘',
+      notifyResume: '恢復通知', notifyPauseStatus: (time, minutes) => `通知暫停至 ${time}（剩餘 ${minutes} 分鐘）`,
+      pipSummaryToggle: 'PiP 精簡摘要', pipSummaryTitle: 'Agent 摘要', pipExpand: '展開列表', pipCollapse: '返回摘要',
+      pipProjectScope: (count) => count ? `已選取 ${count} 個專案` : '全部專案',
+      pipProjectsLabel: 'PiP 顯示的專案', pipProjectsHint: '選擇要在 PiP 顯示的專案；不選代表全部。',
+      pipNoProjects: '目前資料中沒有專案。', pipNoMatches: '沒有符合所選專案的 session。',
+      pipProjectLimit: '最多可選 64 個專案。',
+      pipClearProjects: '顯示所有專案', pipUnavailable: '目前不可用',
+      pipUnavailableSession: (agent, id) => `session 不可用 — ${agent} / ${id}`,
+      pipSummaryEmpty: '目前沒有需要回應、錯誤、狀態未知或工作中的 agent。',
       needsYou: '需要你', working: '工作中', finished: '回合已完成', idle: '閒置',
       thinking: '思考中', tool: '執行中', typing: '回覆中', waiting: '等你回應', done: '本回合已完成', interrupted: '已中斷', error: '錯誤',
       copy: '複製接續指令', copied: '已複製 ✓', sub: '子 agent', auto: '自動',
@@ -260,6 +282,19 @@
     notify: '需要你回應、錯誤或回合完成時通知',
     errorNote: (p) => `${p}：錯誤`,
   });
+
+  // New notification and PiP controls currently have English and Traditional
+  // Chinese labels; the other supported locales use the English fallback.
+  const fallbackKeys = [
+    'notifyCategories', 'notifyNeeds', 'notifyErrors', 'notifyDone', 'notifyPause', 'notifyPauseChoose',
+    'notifyPause15', 'notifyPause30', 'notifyPause60', 'notifyResume', 'notifyPauseStatus', 'pipSummaryToggle',
+    'pipSummaryTitle', 'pipExpand', 'pipCollapse', 'pipProjectScope', 'pipProjectsLabel', 'pipProjectsHint', 'pipNoProjects',
+    'pipNoMatches', 'pipClearProjects', 'pipUnavailable', 'pipUnavailableSession', 'pipSummaryEmpty', 'pipProjectLimit',
+  ];
+  for (const [locale, strings] of Object.entries(S)) {
+    if (locale === 'en' || locale === 'zh-TW') continue;
+    for (const key of fallbackKeys) if (!Object.hasOwn(strings, key)) strings[key] = S.en[key];
+  }
 
   // Map a browser locale like "zh-HK" or "pt-BR" to one we have.
   function fromBrowser(list) {

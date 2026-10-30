@@ -40,7 +40,7 @@ function page(search = '') {
         classList: {
           toggle(name, force = !classes.has(name)) { force ? classes.add(name) : classes.delete(name); },
           add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, contains(name) { return classes.has(name); },
-        }, addEventListener() {} });
+        }, setAttribute(name, value) { this[name] = String(value); }, addEventListener() {} });
     }
     return elements.get(id);
   };
@@ -50,7 +50,7 @@ function page(search = '') {
   // This unit harness stops before the side-panel layout code. Browser checks
   // exercise the real panel, while these stubs keep status/render coverage focused.
   const context = vm.createContext({ console, Intl: testIntl, Date: TestDate, EventSource: FakeEventSource, URLSearchParams, Notification,
-    document: { getElementById: element, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} }, body: { classList: { add() {} } } },
+    document: { getElementById: element, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} }, body: { classList: { add() {}, toggle() {} } } },
     Image: class {},
     navigator: { languages: ['en'] }, location: { search }, history: { replaceState() {} },
     localStorage: { getItem: () => null, setItem() {} }, office: null, refreshTip() {},
@@ -70,6 +70,11 @@ function session(overrides = {}) {
   return { key: 'codex:one', id: 'one', agent: 'codex', project: 'Sample', status: 'tool',
     activity: 'Shell: tests', subagent: false, lastEventAt: 1000, turnStartedAt: 1000,
     pendingRequests: [], needsInput: false, staleAfterMs: 600000, ...overrides };
+}
+
+function sendSnapshot(p, sessions) {
+  p.context.data = { now: p.now(), sessions };
+  p.run('onData(data)');
 }
 
 function connectionText(p) {
@@ -392,4 +397,155 @@ test('error and notification labels are localized in English and Traditional Chi
   assert.match(p.run('I18N["zh-TW"].notify'), /需要你回應.*錯誤.*完成/);
   assert.equal(p.run('I18N.es.errorNote("Sample")'), 'Sample: Error');
   assert.match(p.run('I18N.es.notify'), /input requests.*errors.*completed/i);
+});
+
+test('notification category preference falls through from disabled errors to pending requests', () => {
+  const p = page();
+  p.run('window.__chimes=[]; chime=(kind)=>window.__chimes.push(kind); state.sound=true; state.notifyErrors=false; state.notifyNeeds=true');
+  sendSnapshot(p, [session()]);
+  sendSnapshot(p, [session({ status: 'error', error: 'Hidden error detail', needsInput: true,
+    pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose a recovery action' }] })]);
+
+  assert.equal(p.notifications.length, 1);
+  assert.match(p.notifications[0].title, /Waiting for you/);
+  assert.equal(p.notifications[0].options.body, 'Choose a recovery action');
+  assert.doesNotMatch(p.notifications[0].options.body, /Hidden error detail/);
+  assert.deepEqual([...p.run('window.__chimes')], ['attention']);
+  assert.equal(p.run('state.data.sessions[0].status'), 'error');
+  assert.equal(p.run('state.flash.has("codex:one")'), true);
+});
+
+test('each disabled notification category suppresses only its matching event', () => {
+  const events = [
+    ['notifyNeeds', session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] })],
+    ['notifyErrors', session({ status: 'error', error: 'Tool crashed' })],
+    ['notifyDone', session({ status: 'done' })],
+  ];
+  for (const [preference, event] of events) {
+    const p = page();
+    p.run('window.__chimes=[]; chime=(kind)=>window.__chimes.push(kind); state.sound=true');
+    sendSnapshot(p, [session()]);
+    p.run(`state.${preference}=false`);
+    sendSnapshot(p, [event]);
+    assert.equal(p.notifications.length, 0, `${preference} suppresses its category`);
+    assert.deepEqual([...p.run('window.__chimes')], []);
+    assert.equal(p.run('state.flash.has("codex:one")'), true, 'category switches leave visual attention enabled');
+  }
+});
+
+test('desktop master and sound are independent while both honor category switches', () => {
+  const soundOnly = page();
+  soundOnly.run('window.__chimes=[]; chime=(kind)=>window.__chimes.push(kind); state.notify=false; state.sound=true; state.notifyNeeds=true');
+  sendSnapshot(soundOnly, [session()]);
+  sendSnapshot(soundOnly, [session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] })]);
+  assert.equal(soundOnly.notifications.length, 0);
+  assert.deepEqual([...soundOnly.run('window.__chimes')], ['attention']);
+
+  const desktopOnly = page();
+  desktopOnly.run('window.__chimes=[]; chime=(kind)=>window.__chimes.push(kind); state.notify=true; state.sound=false; state.notifyNeeds=true');
+  sendSnapshot(desktopOnly, [session()]);
+  sendSnapshot(desktopOnly, [session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] })]);
+  assert.equal(desktopOnly.notifications.length, 1);
+  assert.deepEqual([...desktopOnly.run('window.__chimes')], []);
+});
+
+test('denied desktop permission does not disable an independently enabled sound', () => {
+  const p = page();
+  p.run('window.__chimes=[]; chime=(kind)=>window.__chimes.push(kind); state.notify=true; state.sound=true; state.notifyNeeds=true');
+  p.context.Notification.permission = 'denied';
+  sendSnapshot(p, [session()]);
+  sendSnapshot(p, [session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] })]);
+  assert.equal(p.notifications.length, 0);
+  assert.deepEqual([...p.run('window.__chimes')], ['attention']);
+});
+
+test('a notification pause gates desktop and sound without catch-up after expiry', () => {
+  const p = page();
+  p.run('window.__chimes=[]; chime=(kind)=>window.__chimes.push(kind); state.sound=true; state.notifyPausedUntil=Date.now()+900000');
+  sendSnapshot(p, [session()]);
+  const paused = session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] });
+  sendSnapshot(p, [paused]);
+  assert.equal(p.notifications.length, 0);
+  assert.deepEqual([...p.run('window.__chimes')], []);
+  assert.equal(p.run('state.prev.get("codex:one").pendingIds[0]'), 'q1');
+  assert.equal(p.run('state.data.sessions[0].pendingRequests[0].id'), 'q1');
+
+  p.setNow(p.now() + 900001);
+  sendSnapshot(p, [paused]);
+  assert.equal(p.notifications.length, 0, 'a pending request that arrived during the pause is not replayed');
+  assert.deepEqual([...p.run('window.__chimes')], []);
+
+  sendSnapshot(p, [session()]);
+  sendSnapshot(p, [session({ needsInput: true, pendingRequests: [{ id: 'q2', kind: 'question', summary: 'A new request' }] })]);
+  assert.equal(p.notifications.length, 1);
+  assert.deepEqual([...p.run('window.__chimes')], ['attention']);
+});
+
+test('new notification preferences validate bounded project keys and absolute pause deadlines', () => {
+  const p = page();
+  assert.equal(p.run('validPreference("notifyPausedUntil", 0)'), true);
+  assert.equal(p.run('validPreference("notifyPausedUntil", 1700000900000)'), true);
+  assert.equal(p.run('validPreference("notifyPausedUntil", -1)'), false);
+  assert.equal(p.run('validPreference("notifyPausedUntil", Infinity)'), false);
+  assert.equal(p.run('validPreference("notifyNeeds", true)'), true);
+  assert.equal(p.run('validPreference("notifyErrors", "true")'), false);
+  assert.equal(p.run('validPreference("pipSummary", false)'), true);
+  assert.equal(p.run('validPreference("pipProjects", ["cwd:/repo/a", "session:codex:one"])'), true);
+  assert.equal(p.run('validPreference("pipProjects", ["/repo/a"])'), false);
+  assert.equal(p.run('validPreference("pipProjects", Array(65).fill("cwd:/repo/a"))'), false);
+});
+
+test('PiP summary groups pending errors once and project selection never mutates main data', () => {
+  const p = page('?pip=1');
+  let officeUpdates = 0;
+  p.context.office = { setVisible() {}, update() { officeUpdates++; } };
+  p.context.items = [
+    session({ key: 'codex:a', id: 'a', cwd: '/repo/a', project: 'Same name', status: 'error', error: 'Permission denied', needsInput: true,
+      pendingRequests: [{ id: 'q1', kind: 'question', summary: 'Choose one' }] }),
+    session({ key: 'codex:b', id: 'b', cwd: '/repo/b', project: 'Same name', status: 'error', error: 'Tool crashed' }),
+    session({ key: 'codex:c', id: 'c', cwd: null, project: 'No cwd', status: 'unknown', lastEventAt: null }),
+    session({ key: 'codex:d', id: 'd', cwd: '/repo/a', project: 'Same name', status: 'tool' }),
+    session({ key: 'codex:done', id: 'done', cwd: '/repo/a', project: 'Same name', status: 'done' }),
+  ];
+  p.run('state.loaded=true; state.pipSummary=true; state.data.sessions=items; syncControls(); render()');
+
+  let html = p.elements.get('main').innerHTML;
+  assert.match(html, /class="pip-summary"/);
+  assert.match(html, /data-group="needsYou"[^>]*>[\s\S]*?<strong>1<\/strong>/);
+  assert.match(html, /data-group="errors"[^>]*>[\s\S]*?<strong>1<\/strong>/);
+  assert.match(html, /data-group="unknown"[^>]*>[\s\S]*?<strong>1<\/strong>/);
+  assert.match(html, /data-group="working"[^>]*>[\s\S]*?<strong>1<\/strong>/);
+  assert.equal(p.run('typeof projectKey'), 'function');
+  assert.equal(p.run('projectKey(items[0])'), 'cwd:/repo/a');
+  assert.equal(p.run('projectKey(items[1])'), 'cwd:/repo/b');
+  assert.match(p.run('projectKey(items[2])'), /^session:/);
+  assert.equal(p.run('projectKey({cwd:"C:\\\\Repo\\\\App",agent:"codex",id:"one"})'), 'cwd:c:/repo/app', 'Windows drive paths compare stably across slash forms and letter case');
+  assert.equal(p.run('projectKey({cwd:"//server/share/App",agent:"codex",id:"one"})'), 'cwd://server/share/App', 'UNC identity retains its double-slash root');
+  assert.notEqual(p.run('projectKey({cwd:"/repo\\\\app",agent:"codex",id:"one"})'), p.run('projectKey({cwd:"/repo/app",agent:"codex",id:"one"})'), 'a POSIX cwd is not rewritten as a Windows path');
+  assert.equal(p.run('validPreference("pipProjects", ["cwd:"+"x".repeat(8188)])'), true);
+  assert.equal(p.run('validPreference("pipProjects", ["cwd:"+"x".repeat(8189)])'), false);
+  assert.equal(officeUpdates, 0, 'summary mode does not update or animate office agents');
+
+  p.run('state.pipProjects=["cwd:/repo/a"]; render()');
+  html = p.elements.get('main').innerHTML;
+  assert.match(html, /data-group="needsYou"[^>]*>[\s\S]*?<strong>1<\/strong>/);
+  assert.match(html, /data-group="errors"><span>Errors<\/span><b><strong>0<\/strong>/,
+    'a pending error is counted once under Needs you, not again under Errors');
+  assert.equal(p.run('state.data.sessions.length'), 5, 'the PiP display filter leaves the full source snapshot intact');
+  assert.match(p.elements.get('pipProjectsList').innerHTML, /\/repo\/a/);
+  assert.match(p.elements.get('pipProjectsList').innerHTML, /\/repo\/b/);
+
+  p.run('state.pipProjects=["cwd:/missing"]; syncControls(); render()');
+  html = p.elements.get('main').innerHTML;
+  assert.match(html, /data-pip-no-matches/);
+  assert.match(p.elements.get('pipProjectsList').innerHTML, /Unavailable/);
+  assert.deepEqual([...p.run('state.pipProjects')], ['cwd:/missing'], 'missing selections remain selected instead of broadening');
+
+  p.run('state.pipProjects=["cwd:/repo/a"]; state.pipSummaryExpanded=true; syncControls(); render()');
+  assert.equal(p.run('state.view'), 'office', 'expanding the summary does not overwrite the saved view');
+  html = p.elements.get('main').innerHTML;
+  assert.match(html, /data-key="codex:a"/);
+  assert.match(html, /data-key="codex:d"/);
+  assert.doesNotMatch(html, /data-key="codex:b"|data-key="codex:c"/);
+  assert.equal(officeUpdates, 0, 'the expanded list does not update or animate the hidden office');
 });

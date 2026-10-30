@@ -312,9 +312,124 @@ async function drawnLogos(target) {
   assert.equal(await frame.locator('.card[data-key="codex:done"],.card[data-key="codex:idle"]').count(),0);
   assert.equal(await frame.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   assert.equal(await frame.locator('.card .agent.claude').count(),0);
-  assert.equal(await frame.locator('.card .agent img').evaluateAll(imgs=>imgs.length>0&&imgs.every(img=>img.complete&&img.naturalWidth>0)),true);
+  await frame.waitForFunction(()=>{
+   const imgs=[...document.querySelectorAll('.card .agent img')];
+   return imgs.length>0&&imgs.every(img=>img.complete);
+  });
+  const compactLogos=await frame.locator('.card .agent img').evaluateAll(imgs=>imgs.map(img=>({src:img.src,width:img.naturalWidth})));
+  assert.ok(compactLogos.length>0&&compactLogos.every(img=>img.width>0),`compact provider logos should finish loading: ${JSON.stringify(compactLogos)}`);
   await screenshot(pip, 'pip-list');
   check('compact list keeps pending errors in Needs you and shows errors, unknown status, and fresh/stale evidence');
+  const summarySessions=[
+   ...compactSessions,
+   {key:'codex:same-a',id:'same-a',agent:'codex',project:'Same project',cwd:'/workspace/a',status:'tool',activity:'Read: a.js',lastEventAt:Date.now(),turnStartedAt:Date.now()-1000},
+   {key:'codex:same-b',id:'same-b',agent:'codex',project:'Same project',cwd:'/workspace/b',status:'error',error:'Other project failed',lastEventAt:Date.now(),turnStartedAt:Date.now()-1000},
+   {key:'codex:outside',id:'outside',agent:'codex',project:'Outside project',cwd:'/workspace/outside',status:'tool',activity:'Read: outside.js',lastEventAt:Date.now(),turnStartedAt:Date.now()-1000},
+  ];
+  await page.evaluate(()=>{state.view='office';store.set('view','office');syncControls();render()});
+  await frame.waitForFunction(()=>state.view==='office');
+  await Promise.all([
+   frame.evaluate(s=>onData({now:Date.now(),sessions:s}),summarySessions),
+   page.evaluate(s=>onData({now:Date.now(),sessions:s}),summarySessions),
+  ]);
+  const mainRowsBeforePipFilter=await rowKeys(page);
+  await openSettings(page);await page.check('#pipSummary');
+  await frame.waitForFunction(()=>state.pipSummary&&document.querySelector('.pip-summary'));
+  await page.uncheck('#notifyDone');await frame.waitForFunction(()=>state.notifyDone===false);
+  await page.check('#notifyDone');await frame.waitForFunction(()=>state.notifyDone===true);
+  assert.equal(await frame.evaluate(()=>state.view),'office','the compact-summary preference leaves the saved office view intact');
+  assert.equal(await frame.locator('#officeWrap').isVisible(),false,'collapsed summary hides the office renderer');
+  assert.equal(await frame.locator('#pipSummaryToggle').isVisible(),true);
+  assert.equal(await frame.locator('#summary').isVisible(),false,'the summary tiles do not duplicate the header counters');
+  assert.equal(await frame.locator('[data-pip-scope]').innerText(),await frame.evaluate(()=>L.pipProjectScope(0)),'the summary identifies its all-project scope');
+  assert.equal(await frame.locator('.pip-summary [data-group="needsYou"] strong').innerText(),'1');
+  assert.equal(await frame.locator('.pip-summary [data-group="errors"] strong').innerText(),'2');
+  assert.equal(await frame.locator('.pip-summary [data-group="working"] strong').innerText(),'3');
+  assert.equal(await frame.locator('#conn').isVisible(),true);
+  assert.equal(await frame.evaluate(()=>state.connection==='connected'&&state.lastUpdateAt!==null),true);
+  assert.ok((await frame.locator('#connState').innerText()).trim(),'connection state text stays visible in the selected locale');
+  assert.ok((await frame.locator('#connTime').innerText()).trim(),'last-receipt time stays visible in the selected locale');
+  await openSettings(frame);
+  const duplicateChoices=frame.locator('#pipProjectsList .pip-project-option').filter({hasText:'Same project'});
+  assert.equal(await duplicateChoices.count(),2,'same project names remain separate choices');
+  await frame.locator('#notifyPause').selectOption('15');
+  await frame.waitForFunction(()=>state.notifyPausedUntil>Date.now());
+  const pipPauseDeadline=await frame.evaluate(()=>state.notifyPausedUntil);
+  await page.waitForFunction(deadline=>state.notifyPausedUntil===deadline,pipPauseDeadline);
+  await frame.click('#notifyResume');
+  await page.waitForFunction(()=>state.notifyPausedUntil===0);
+  check('notification categories sync main-to-PiP and pause/resume sync PiP-to-main');
+  const projectA=frame.locator('#pipProjectsList [data-pip-project="cwd:/workspace/a"]');
+  await projectA.focus();
+  await frame.evaluate(()=>onData({now:Date.now(),sessions:state.data.sessions}));
+  assert.equal(await frame.evaluate(()=>document.activeElement?.dataset.pipProject),'cwd:/workspace/a','a routine snapshot keeps keyboard focus in the project chooser');
+  await pip.keyboard.press('Space');
+  await frame.waitForFunction(()=>state.pipProjects.includes('cwd:/workspace/a'));
+  await page.waitForFunction(()=>state.pipProjects.includes('cwd:/workspace/a'));
+  await frame.click('#settingsMenu > summary');
+  assert.deepEqual(await rowKeys(page),mainRowsBeforePipFilter,'the PiP project filter does not change main-page rows');
+  assert.equal(await page.evaluate(()=>state.view),'office','the main dashboard stays in its saved view');
+  assert.equal(await page.evaluate(()=>state.full),true,'the main dashboard stays in full-screen mode while PiP is filtered');
+  assert.equal(await page.evaluate(()=>state.data.sessions.length),summarySessions.length,'the main page retains the full source snapshot');
+  assert.equal(await frame.locator('.pip-summary [data-group="needsYou"] strong').innerText(),'0');
+  assert.equal(await frame.locator('.pip-summary [data-group="errors"] strong').innerText(),'0');
+  assert.equal(await frame.locator('.pip-summary [data-group="working"] strong').innerText(),'1');
+  assert.equal(await frame.locator('[data-pip-scope]').innerText(),await frame.evaluate(()=>L.pipProjectScope(1)),'the selected-project scope remains visible beside its counts');
+  const notificationsBeforeOutsideProject=await page.evaluate(()=>__notifications.length);
+  const outsideNeeds=summarySessions.map(s=>s.key==='codex:outside'?{...s,needsInput:true,pendingRequests:[{id:'outside-q',kind:'question',summary:'Outside project request'}]}:s);
+  await Promise.all([
+   frame.evaluate(s=>onData({now:Date.now(),sessions:s}),outsideNeeds),
+   page.evaluate(s=>onData({now:Date.now(),sessions:s}),outsideNeeds),
+  ]);
+  assert.equal(await page.evaluate(()=>__notifications.length),notificationsBeforeOutsideProject+1,'the main page still notifies for a session outside the PiP filter');
+  assert.equal(await frame.evaluate(()=>__notifications.length),0,'the PiP remains silent');
+  assert.deepEqual([...(await rowKeys(page))].sort(),[...mainRowsBeforePipFilter].sort(),'main rows stay unfiltered after an out-of-project request');
+  check('PiP project filters preserve same-name paths, chooser keyboard focus, main rows, office and notifications');
+  for(const [width,height,scheme] of [[320,360,'dark'],[480,400,'light']]) {
+   await pip.setViewportSize({width,height});await pip.emulateMedia({colorScheme:scheme});
+   await frame.waitForFunction(w=>innerWidth===w,width);
+   await frame.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
+   await waitForFiniteAnimations(frame);
+   const geometry=await frame.evaluate(()=>({width:innerWidth,height:innerHeight,conn:document.getElementById('conn').getBoundingClientRect().toJSON(),summary:document.querySelector('.pip-summary').getBoundingClientRect().toJSON()}));
+   assert.ok(geometry.conn.bottom<=height&&geometry.conn.width<=width,`${width}x${height} keeps connection and time visible: ${JSON.stringify(geometry)}`);
+   assert.ok(geometry.summary.width<=width&&geometry.summary.top>=geometry.conn.bottom,`${width}x${height} keeps the compact summary below connection health: ${JSON.stringify(geometry)}`);
+   await screenshot(pip,`pip-summary-${width}-${scheme}`);
+  }
+  await frame.evaluate(s=>onData({now:Date.now(),sessions:s.filter(x=>x.key!=='codex:same-a')}),outsideNeeds);
+  await frame.waitForFunction(()=>document.querySelector('[data-pip-no-matches]'));
+  await openSettings(frame);
+  const unavailableProject=frame.locator('#pipProjectsList .pip-project-option.unavailable');
+  assert.equal(await unavailableProject.count(),1,'a selected project missing from later data remains visible as unavailable');
+  const unavailableText=await unavailableProject.innerText();
+  const unavailableLabel=await frame.evaluate(()=>L.pipUnavailable);
+  assert.ok(unavailableText.includes(unavailableLabel),`unavailable project label should use the current locale: ${JSON.stringify({unavailableText,unavailableLabel,langCode:await frame.evaluate(()=>langCode)})}`);
+  assert.equal(await unavailableProject.locator('small').innerText(),'/workspace/a');
+  assert.deepEqual(await frame.evaluate(()=>state.pipProjects),['cwd:/workspace/a'],'missing selected projects never broaden the filter');
+  assert.equal(await frame.locator('[data-pip-scope]').innerText(),await frame.evaluate(()=>L.pipProjectScope(1)),'an unavailable saved selection still counts toward the visible filter scope');
+  await frame.click('[data-pip-clear]');
+  await frame.waitForFunction(()=>state.pipProjects.length===0&&!document.querySelector('[data-pip-no-matches]'));
+  await page.waitForFunction(()=>state.pipProjects.length===0);
+  await frame.locator('#pipSummaryToggle').focus();await pip.keyboard.press('Enter');
+  await frame.waitForFunction(()=>state.pipSummaryExpanded&&document.querySelector('.card[data-key="codex:pending-error"]'));
+  assert.equal(await frame.evaluate(()=>state.view),'office','expanding uses the existing list without rewriting the saved office view');
+  assert.equal(await frame.locator('#officeWrap').isVisible(),false,'expanded list does not run the hidden office renderer');
+  assert.equal(await frame.locator('#viewSeg').isVisible(),false,'summary mode hides a contradictory office/list selector');
+  await page.uncheck('#pipSummary');
+  await frame.waitForFunction(()=>!state.pipSummary&&!state.pipSummaryExpanded&&document.getElementById('officeWrap').style.display!=='none');
+  await page.check('#pipSummary');
+  await frame.waitForFunction(()=>state.pipSummary&&!state.pipSummaryExpanded&&document.querySelector('.pip-summary'));
+  assert.equal(await frame.evaluate(()=>state.view),'office','main-tab off/on resets the PiP summary to collapsed without changing its saved view');
+  await frame.locator('#pipSummaryToggle').focus();await pip.keyboard.press('Space');
+  await frame.waitForFunction(()=>state.pipSummaryExpanded&&document.querySelector('.card[data-key="codex:pending-error"]'));
+  await frame.locator('#pipSummaryToggle').focus();await pip.keyboard.press('Space');
+  await frame.waitForFunction(()=>!state.pipSummaryExpanded&&document.querySelector('.pip-summary'));
+  await openSettings(frame);await frame.uncheck('#pipSummary');
+  await page.waitForFunction(()=>!state.pipSummary);
+  assert.equal(await frame.locator('#pipSummaryToggle').isVisible(),false,'the toolbar toggle stays hidden when the opt-in is off');
+  assert.equal(await frame.locator('#officeWrap').isVisible(),true,'turning summary off restores the saved office view');
+  check('PiP summary expands by keyboard, cross-window off/on resets it, and the PiP toggle restores the saved office view');
+  await page.evaluate(()=>{__notifications.length=0});
+  await frame.evaluate(()=>{__notifications.length=0});
   const next=sessions.map(s=>s.key==='codex:sub'?{...s,status:'done',subagent:false}:s);
   await frame.evaluate(s=>onData({now:Date.now(),sessions:s}),next);
   await page.evaluate(s=>onData({now:Date.now(),sessions:s}),next);
