@@ -38,6 +38,35 @@ function newSession(agent, id, file) {
   };
 }
 
+// Local calendar day, as a sortable YYYY-MM-DD key.
+function dayKey(ms) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Today's turns and tokens, as far as the log records them. A large log read
+// head + tail only counts what was read.
+function today(s, ts) {
+  if (!ts) return null;
+  const day = dayKey(ts);
+  if (!s.daily || s.daily.day < day) s.daily = { day, turns: 0, tokens: 0 };
+  return s.daily.day === day ? s.daily : null;
+}
+
+function usage(s, ts, { context, window, tokens }) {
+  if (Number.isFinite(context) && context > 0) {
+    s.context = context;
+    s.contextWindow = Number.isFinite(window) && window > 0 ? window : null;
+  }
+  const d = Number.isFinite(tokens) && tokens > 0 && today(s, ts);
+  if (d) d.tokens += tokens;
+}
+
+function countTurn(s, ts) {
+  const d = today(s, ts);
+  if (d) d.turns += 1;
+}
+
 function clean(text, max = 220) {
   if (!text) return null;
   let t = String(text);
@@ -200,12 +229,22 @@ function applyClaude(s, d) {
         s.reply = null;
       }
       s.turnStartedAt = ts;
+      if (!isNotification && !d.isSidechain) countTurn(s, ts);
       set(s, 'thinking', null);
       return;
     }
     case 'assistant': {
       const m = d.message || {};
       if (m.model && m.model !== '<synthetic>') s.model = m.model;
+      // One API response is logged once per content block with the same usage.
+      const u = m.usage;
+      if (u && typeof u === 'object' && m.id !== s._usageId) {
+        s._usageId = m.id;
+        const n = (k) => (Number.isFinite(u[k]) ? u[k] : 0);
+        const prompt = n('input_tokens') + n('cache_creation_input_tokens') + n('cache_read_input_tokens');
+        usage(s, ts, { context: prompt + n('output_tokens'), window: prompt + n('output_tokens') > 200_000 ? 1_000_000 : 200_000,
+          tokens: n('input_tokens') + n('cache_creation_input_tokens') + n('output_tokens') });
+      }
       const blocks = Array.isArray(m.content) ? m.content : [];
       for (const b of blocks) {
         if (b.type === 'thinking' || b.type === 'redacted_thinking') set(s, 'thinking');
@@ -396,6 +435,8 @@ function applyCodex(s, d) {
       switch (p.type) {
         case 'task_started':
           clearPendingRequests(s, { preserveAsync: true });
+          // Old and new log formats both start every turn with this event.
+          countTurn(s, ts);
           s.turnStartedAt = ts;
           s.reply = null;
           set(s, 'thinking', null);
@@ -418,6 +459,14 @@ function applyCodex(s, d) {
           s.prompt = clean(typeof p.message === 'string' ? p.message : codexText(p.message));
           set(s, 'thinking', null);
           return;
+        case 'token_count': {
+          const last = p.info?.last_token_usage;
+          if (!last || typeof last !== 'object') return;
+          const n = (k) => (Number.isFinite(last[k]) ? last[k] : 0);
+          usage(s, ts, { context: n('input_tokens') + n('output_tokens'), window: p.info.model_context_window,
+            tokens: n('input_tokens') - n('cached_input_tokens') + n('output_tokens') });
+          return;
+        }
         case 'agent_message':
           s.reply = clean(p.message) || s.reply;
           set(s, 'typing', null);
@@ -557,6 +606,78 @@ function describeGeminiTool(tc) {
       return `WebFetch ${short(a.url || a.prompt, 60)}`;
     default:
       return tc.displayName || name;
+  }
+}
+
+function extractCopilotText(value, depth = 0) {
+  if (value == null || depth > 4) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((v) => extractCopilotText(v, depth + 1)).join('\n');
+  if (typeof value === 'object') {
+    if (typeof value.text === 'string') return value.text;
+    if (typeof value.content === 'string') return value.content;
+    if (Array.isArray(value.content)) return extractCopilotText(value.content, depth + 1);
+    if (typeof value.message === 'string') return value.message;
+  }
+  return '';
+}
+
+function describeCopilotTool(tool, args = {}) {
+  const name = tool || 'tool';
+  if (args && typeof args === 'object') {
+    if (args.pattern) return `Search: ${short(args.pattern, 60)}`;
+    if (args.command) return `Shell: ${short(Array.isArray(args.command) ? args.command.join(' ') : String(args.command), 60)}`;
+    if (args.path || args.file_path) return `${name} ${path.basename(String(args.path || args.file_path || '')) || name}`;
+  }
+  return name;
+}
+
+function applyCopilot(s, d) {
+  if (!d || typeof d !== 'object') return;
+  const data = d.data || d;
+  if (d.timestamp) stamp(s, d.timestamp);
+  switch (d.type) {
+    case 'session.start': {
+      if (data.sessionId) s.sessionId = data.sessionId;
+      if (data.context?.cwd) s.cwd = data.context.cwd;
+      else if (data.context?.gitRoot) s.cwd = data.context.gitRoot;
+      if (data.selectedModel) s.model = data.selectedModel;
+      if (data.startTime) stamp(s, data.startTime);
+      return;
+    }
+    case 'user.message': {
+      const text = clean(extractCopilotText(data.content ?? data.transformedContent ?? data.prompt));
+      if (text) s.prompt = text;
+      s.turnStartedAt = d.timestamp ? Date.parse(d.timestamp) : s.turnStartedAt;
+      set(s, 'thinking', null);
+      return;
+    }
+    case 'assistant.message': {
+      const text = clean(extractCopilotText(data.content ?? data.message));
+      if (text) s.reply = text;
+      if (data.model) s.model = data.model;
+      set(s, 'typing', null);
+      return;
+    }
+    case 'tool.execution_start': {
+      const name = data.toolName || data.tool_name || 'tool';
+      set(s, 'tool', describeCopilotTool(name, data.arguments || data.args || {}));
+      return;
+    }
+    case 'tool.execution_complete': {
+      if (data.model) s.model = data.model;
+      set(s, 'thinking', null);
+      return;
+    }
+    case 'tool.execution_error':
+      set(s, 'error', null);
+      s.error = short(data.message || 'Tool error', 120);
+      return;
+    case 'session.end':
+      set(s, 'done', null);
+      return;
+    default:
+      return;
   }
 }
 
@@ -732,4 +853,4 @@ function applyOMP(s, d) {
   else set(s, 'thinking', null);
 }
 
-module.exports = { newSession, applyClaude, applyCodex, applyGemini, applyGeminiDocument, applyOMP, clean };
+module.exports = { dayKey, newSession, applyClaude, applyCodex, applyGemini, applyGeminiDocument, applyCopilot, applyOMP, clean, describeClaudeTool, describeCodexCall, codexText };

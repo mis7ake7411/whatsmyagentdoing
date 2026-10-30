@@ -4,24 +4,31 @@
 // trying the UI on a machine with no sessions. Same interface as Watcher.
 
 const { EventEmitter } = require('events');
+const { dayKey } = require('./parsers');
 
 const TEAM = [
   ['claude', 'api-server', 'Add rate limiting to /v1/orders'],
   ['codex', 'landing-page', 'Make the hero section responsive'],
+  ['copilot', 'cli-tools', 'Add a --verbose flag'],
   ['claude', 'mobile-app', 'Fix the crash on the settings screen'],
   ['gemini', 'data-pipeline', 'Backfill last week of events'],
-  ['claude', 'design-system', 'Add a dark variant to Button'],
-  ['claude', 'docs-site', 'Write the getting-started guide'],
+  ['omp', 'search-index', 'Speed up the search index'],
+  ['kimi', 'docs-site', 'Write the getting-started guide'],
   ['codex', 'billing', 'Handle failed card retries'],
-  ['claude', 'auth-service', 'Rotate the signing keys'],
+  ['dsh', 'ml-eval', 'Rerun the eval suite on the new model'],
   ['gemini', 'infra', 'Bump the Postgres instance size'],
-  ['claude', 'blog', 'Draft the release notes for v2.3'],
+  ['grok', 'cost-report', 'Find idle cloud spend'],
 ];
 
 const TOOLS = {
   claude: ['Bash: npm test', 'Edit routes.ts', 'Read schema.prisma', 'Grep "retry"', 'Bash: git diff', 'Write README.md', 'WebSearch “Postgres upgrade”', 'github · create_pull_request'],
   gemini: ['Shell: npm run lint', 'ReadFile schema.sql', 'WebSearch “pg_upgrade”', 'Edit pipeline.py'],
   codex: ['Shell: pnpm test', 'Shell: rg TODO src', 'Editing app.tsx', 'Shell: npx tsc --noEmit', 'Shell: git status'],
+  copilot: ['grep AGENT|agent', 'edit dashboard.js', 'read README.md', 'search codebase', 'run tests'],
+  omp: ['bash: cargo test', 'read src/index.rs', 'edit src/query.rs', 'bash: cargo bench'],
+  kimi: ['Shell: npm run build', 'ReadFile guide.md', 'Edit getting-started.md', 'Shell: npm run lint'],
+  dsh: ['Shell: python eval.py', 'Read metrics.json', 'Edit config.yaml', 'Shell: pytest -q'],
+  grok: ['Read billing.csv', 'Shell: aws ce get-cost-and-usage', 'Edit report.md', 'Search “idle instances”'],
 };
 
 const REPLIES = [
@@ -46,7 +53,8 @@ class DemoWatcher extends EventEmitter {
       file: null,
       cwd: `/home/dev/${project}`,
       title: prompt,
-      model: { claude: 'claude-opus-5-5', codex: 'gpt-5-codex', gemini: 'gemini-3-pro' }[agent],
+      model: { claude: 'claude-opus-5-5', codex: 'gpt-5-codex', gemini: 'gemini-3-pro', copilot: 'mai-code-1.1-flash',
+        omp: 'claude-sonnet-5-5', kimi: 'kimi-k2', dsh: 'deepseek-v4', grok: 'grok-4' }[agent],
       subagent: false,
       parentId: null,
       status: 'idle',
@@ -61,6 +69,16 @@ class DemoWatcher extends EventEmitter {
       offset: (i * 7.3) % 37,
       // A couple of them sometimes stop to ask you something.
       asks: i === 2 || i === 6,
+      history: [
+        { role: 'user', text: prompt, at: now - 900_000 },
+        { role: 'tool', text: TOOLS[agent][0], at: now - 860_000 },
+        { role: 'tool', text: TOOLS[agent][1], at: now - 820_000 },
+        { role: 'assistant', text: REPLIES[i % REPLIES.length], at: now - 780_000 },
+      ],
+      // Made-up usage for the Today panel and context bars.
+      daily: { day: dayKey(now), turns: 3 + ((i * 5) % 11), tokens: 40_000 + ((i * 73_919) % 410_000) },
+      context: 30_000 + ((i * 41_017) % 165_000),
+      contextWindow: agent === 'codex' ? 400_000 : 200_000,
     }));
   }
 
@@ -95,11 +113,21 @@ class DemoWatcher extends EventEmitter {
       s.activity = status === 'tool' ? tools[(cycle * 3 + step + s.offset | 0) % tools.length]
         : status === 'waiting' ? 'AskUserQuestion' : null;
       if (status === 'done') s.reply = REPLIES[(cycle + (s.offset | 0)) % REPLIES.length];
+      // A made-up conversation for the side panel.
+      const say = (role, text) => { s.history.push({ role, text, at: now }); if (s.history.length > 30) s.history.shift(); };
+      if (step === 0) say('user', s.prompt);
+      if (status === 'tool') say('tool', s.activity);
+      if (status === 'done') say('assistant', s.reply);
     }
     if (changed) this.emit('change');
   }
 
   sessions() { return this.list; }
+
+  transcript(key) {
+    const s = this.list.find((x) => `${x.agent}:${x.id}` === key);
+    return s ? s.history.slice() : null;
+  }
 }
 
 module.exports = { DemoWatcher };

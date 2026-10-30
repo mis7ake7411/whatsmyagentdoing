@@ -13,12 +13,13 @@ const STATIC = {
   '/i18n.js': ['i18n.js', 'text/javascript; charset=utf-8'],
   '/popout.js': ['popout.js', 'text/javascript; charset=utf-8'],
 };
-const TYPES = { '.js': 'text/javascript; charset=utf-8', '.glb': 'model/gltf-binary', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json' };
+const TYPES = { '.js': 'text/javascript; charset=utf-8', '.glb': 'model/gltf-binary', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.json': 'application/json' };
 // 3D models, served as-is (3D view only).
 const MOUNTS = { '/assets/': path.join(__dirname, '..', 'assets') };
 const scenes = require('./scenes');
 const updater = require('./update');
 const { ompResumeCommand } = require('./omp');
+const { dayKey } = require('./parsers');
 
 function serveFile(res, root, rel) {
   const file = path.normalize(path.join(root, rel));
@@ -86,12 +87,13 @@ function view(s, now, { privacy }) {
   const out = {
     key: `${s.agent}:${s.id}`,
     agent: s.agent,
+    ...(s.source === 'magpie' ? { source: s.source, agentName: s.agentName } : {}),
     id: s.id,
     sessionId: s.sessionId || null,
     parentId: s.parentId,
     subagent: s.subagent,
     cwd: s.cwd,
-    project: s.cwd ? path.basename(s.cwd) : null,
+    project: s.cwd ? `${s.agent === 'copilot' ? 'workspace-' : ''}${path.basename(s.cwd)}` : null,
     title: s.title,
     model: s.model,
     status,
@@ -100,6 +102,8 @@ function view(s, now, { privacy }) {
     quietMs: quiet,
     stale,
     staleAfterMs: STALE_AFTER_MS,
+    context: s.context ? { used: s.context, window: s.contextWindow || null } : null,
+    today: s.daily && s.daily.day === dayKey(now) ? { turns: s.daily.turns, tokens: s.daily.tokens } : null,
     activity: status === 'tool' || status === 'waiting' ? s.activity : null,
     prompt: s.prompt,
     reply: s.reply,
@@ -108,9 +112,10 @@ function view(s, now, { privacy }) {
     lastEventAt,
     startedAt: s.startedAt,
   };
-  if (s.agent === 'omp') {
+  if (s.agent === 'omp' && s.source !== 'magpie') {
     out.ompProfile = s.ompProfile || null;
-    out.resumeCommand = ompResumeCommand(s);
+    // OMP subagents can't be resumed on their own.
+    out.resumeCommand = s.subagent || !s.file ? null : ompResumeCommand(s);
   }
   if (privacy) {
     out.prompt = out.reply = out.title = null;
@@ -130,12 +135,28 @@ function promptLanguage(raw) {
   return guessFromPrompts(recent);
 }
 
+// Today's totals across every session seen today, main sessions and subagents alike.
+function summary(sessions, now) {
+  // Folder names are keys here, so no prototype: a project called __proto__ stays a project.
+  const out = { day: dayKey(now), turns: 0, tokens: 0, agents: 0, byAgent: Object.create(null), projects: Object.create(null) };
+  for (const s of sessions) {
+    if (!s.today) continue;
+    out.agents += 1;
+    out.turns += s.today.turns;
+    out.tokens += s.today.tokens;
+    const a = (out.byAgent[s.agent] ||= { sessions: 0, turns: 0, tokens: 0 });
+    a.sessions += 1; a.turns += s.today.turns; a.tokens += s.today.tokens;
+    if (s.project) out.projects[s.project] = (out.projects[s.project] || 0) + s.today.turns;
+  }
+  return out;
+}
+
 function snapshot(watcher, opts) {
   const now = Date.now();
   const raw = watcher.sessions();
   const sessions = raw.map((s) => view(s, now, opts));
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), sessions };
+  return { now, lang: opts.demo ? null : promptLanguage(raw), sessions, summary: summary(sessions, now) };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
@@ -202,6 +223,12 @@ function createServer(watcher, opts, { onShutdown, onRestart } = {}) {
         (x) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, id: x.id })); },
         (e) => { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: String(e.message || e) })); },
       );
+    } else if (url.pathname === '/api/transcript') {
+      // --private hides prompts and replies everywhere, so it hides the conversation too.
+      const key = url.searchParams.get('key') || '';
+      const messages = opts.privacy || key.length > 600 ? null : watcher.transcript?.(key);
+      res.writeHead(messages ? 200 : opts.privacy ? 403 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(messages ? { messages } : { messages: [], private: !!opts.privacy }));
     } else if (url.pathname === '/api/sessions') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(snapshot(watcher, opts)));

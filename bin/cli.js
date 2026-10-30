@@ -3,15 +3,16 @@
 
 const http = require('http');
 const { spawn } = require('child_process');
-const { Watcher, CLAUDE_DIR, CODEX_DIR, GEMINI_DIR, ompDirs } = require('../src/watcher');
+const { Watcher, CLAUDE_DIR, CODEX_DIR, GEMINI_DIR, CLIENT_DIRS, ompDirs } = require('../src/watcher');
 const { DemoWatcher } = require('../src/demo');
 const scenes = require('../src/scenes');
 const updater = require('../src/update');
+const hook = require('../src/hook');
 const { createServer, snapshot } = require('../src/server');
 const pkg = require('../package.json');
 
 const HELP = `whatsmyagentdoing ${pkg.version}
-See what every Claude Code, Codex, Gemini CLI and OMP agent on this machine is doing, live.
+See what every Claude Code, Codex, Gemini CLI, OMP, Kimi Code, DSH and Grok Build agent is doing, live.
 
 Usage: node bin/cli.js [options]   (or /myoffice as a skill)
 
@@ -28,16 +29,24 @@ Options:
   --scenes          List 3D scenes (installed and downloadable)
   --scene <id>      Download a scene if needed and open the office in it
   --remove-scene <id>  Delete a downloaded scene
+  --install-hook    Optional: add a Claude Code hook so permission prompts show "Waiting for you"
+  --uninstall-hook  Remove that hook again
   -h, --help        Show this help
 
 Reads (never writes):
   ${CLAUDE_DIR}
   ${CODEX_DIR}
   ${GEMINI_DIR}
+  ${Object.values(CLIENT_DIRS).join('\n  ')}
   ${ompDirs().map(x => x.dir).join('\n  ')}
 Override with CLAUDE_CONFIG_DIR / CODEX_HOME / GEMINI_CLI_HOME /
   WMAD_OMP_SESSIONS_DIR (or --omp-dir); OMP also honors PI_CODING_AGENT_DIR.
-OMP profiles under ~/.omp/profiles are discovered automatically.`;
+OMP profiles under ~/.omp/profiles are discovered automatically.
+Other clients: KIMI_CODE_HOME / DSH_HOME / GROK_HOME.
+Optional Magpie: WMAD_MAGPIE_URL=http://127.0.0.1:3430
+and WMAD_MAGPIE_KEY (web sign-in key, server-side only).
+For multiple local instances, WMAD_MAGPIE_SOURCES is a JSON array
+of {url, key} objects, used instead of the single-source variables.`;
 
 function parseArgs(argv) {
   const o = { port: 4545, hours: 24, open: true, privacy: false, json: false, demo: false, stop: false, scenes: false, scene: null, removeScene: null, update: false };
@@ -64,6 +73,9 @@ function parseArgs(argv) {
     else if (a === '--scene') o.scene = argv[++i];
     else if (a.startsWith('--scene=')) o.scene = a.slice(8);
     else if (a === '--remove-scene') o.removeScene = argv[++i];
+    else if (a === '--hook') o.hook = true;
+    else if (a === '--install-hook') o.installHook = true;
+    else if (a === '--uninstall-hook') o.uninstallHook = true;
     else { console.error(`Unknown option: ${a}\n\n${HELP}`); process.exit(1); }
   }
   if (!Number.isFinite(o.port) || !Number.isFinite(o.hours)) { console.error(HELP); process.exit(1); }
@@ -113,6 +125,26 @@ async function printUpdateHint() {
 
 async function main() {
   const o = parseArgs(process.argv.slice(2));
+
+  if (o.hook) {
+    // Run by Claude Code on every Notification. Never fail or print: it must not disturb the session.
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (c) => { if (input.length < 65536) input += c; });
+    process.stdin.on('end', () => { try { hook.record(input); } catch {} });
+    return;
+  }
+
+  if (o.installHook || o.uninstallHook) {
+    try {
+      if (o.installHook) console.log(`Installed the approval hook in ${hook.install()}. New and restarted Claude Code sessions will show "Waiting for you" on permission prompts.`);
+      else console.log(hook.uninstall() ? `Removed the approval hook from ${hook.SETTINGS()}.` : 'The approval hook is not installed.');
+    } catch (e) {
+      console.error(`Could not update ${hook.SETTINGS()}: ${e.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
 
   if (o.update) {
     const before = updater.localVersion();
@@ -172,6 +204,10 @@ async function main() {
     w.tick();
     w.lastScan = 0;
     w.tick();
+    await Promise.all(w.magpies.map((source) => source.poll()));
+    for (const [i, source] of w.magpies.entries()) {
+      if (source.error) throw new Error(`Magpie source ${i + 1}: ${source.error}`);
+    }
     console.log(JSON.stringify(snapshot(w, o).sessions, null, 2));
     return;
   }
@@ -218,4 +254,4 @@ async function main() {
   listen(o.port, 10);
 }
 
-main();
+main().catch((err) => { console.error(err.message); process.exitCode = 1; });

@@ -17,6 +17,7 @@
     claude: ['#c96442', '#d9825f', '#b4553a', '#e09a72'],
     codex: ['#10a37f', '#2bb38f', '#0d8a6b', '#4cc3a0'],
     gemini: ['#4f7cf0', '#6b8ff5', '#3d66d6', '#8aa6f8'],
+    copilot: ['#8f5cf5', '#a06af7', '#7a47d5', '#c5a4ff'],
     omp: ['#a96926', '#c78942', '#8d531e', '#dca45c'],
   };
   // Official product icons, shared by both renderers and the page UI (OMP: a neutral monogram).
@@ -26,6 +27,10 @@
     claude: { label: 'Claude', short: 'Cl', color: '#c96442', logo: '/assets/agents/claude.png' },
     codex: { label: 'Codex', short: 'Cx', color: '#10a37f', logo: '/assets/agents/codex.png' },
     gemini: { label: 'Gemini', short: 'G', color: '#4f7cf0', logo: '/assets/agents/gemini.png' },
+    copilot: { label: 'Copilot', short: 'Co', color: '#8f5cf5', logo: '/assets/agents/copilot.svg', mono: true },
+    kimi: { label: 'Kimi Code', short: 'Ki', logo: '/assets/agents/kimi.svg', mono: true },
+    dsh: { label: 'DSH', short: 'Ds', logo: '/assets/agents/dsh.svg' },
+    grok: { label: 'Grok Build', short: 'Gr', logo: '/assets/agents/grok.svg', mono: true },
     omp: { label: 'OMP', short: 'OMP', color: '#a96926', logo: '/assets/agents/omp.svg' },
   };
   for (const badge of Object.values(AGENT_BADGES)) {
@@ -595,6 +600,23 @@
 
     setVisible(v) { this.visible = v; if (v) this.resize(); }
 
+    // Room on the right covered by an overlay (the agent panel). The canvas
+    // keeps its size; the view eases over so the room stays centred in what
+    // is still visible, instead of the canvas resizing under the slide.
+    setInset(px, animate = true) {
+      const now = performance.now();
+      this.insetFrom = animate ? this.inset(now) : px;
+      this.insetTo = px;
+      this.insetT0 = animate ? now : -Infinity;
+    }
+    inset(now = performance.now()) {
+      if (this.insetTo == null) return 0;
+      const k = Math.min(1, (now - this.insetT0) / 340);
+      const e = 1 - Math.pow(1 - k, 3); // ease out, like the panel's slide
+      return this.insetFrom + (this.insetTo - this.insetFrom) * e;
+    }
+    insetMoving(now = performance.now()) { return this.insetTo != null && now - this.insetT0 < 360; }
+
     // ------------------------------------------------------------ camera / input
 
     resize() {
@@ -613,9 +635,12 @@
       const { W, D } = this.plan;
       const left = this.iso(0, D, 0).x, right = this.iso(W, 0, 0).x;
       const top = this.iso(0, 0, WALL_H).y - 20, bottom = this.iso(W, D, 0).y + 10;
-      const zoom = Math.min(this.cw / (right - left + 30), this.ch / (bottom - top + 30), 2);
-      const want = { zoom, ox: this.cw / 2 - ((left + right) / 2) * zoom, oy: this.ch / 2 - ((top + bottom) / 2) * zoom };
-      if (!this.cam) this.cam = want;
+      const inset = this.inset();
+      const vw = Math.max(120, this.cw - inset);
+      const zoom = Math.min(vw / (right - left + 30), this.ch / (bottom - top + 30), 2);
+      const want = { zoom, ox: vw / 2 - ((left + right) / 2) * zoom, oy: this.ch / 2 - ((top + bottom) / 2) * zoom };
+      // While the inset eases, follow it exactly; otherwise settle gently.
+      if (!this.cam || this.insetMoving()) this.cam = want;
       else for (const k of ['zoom', 'ox', 'oy']) this.cam[k] += (want[k] - this.cam[k]) * 0.1;
     }
 
@@ -1413,6 +1438,7 @@
       c.save();
       c.globalAlpha = 1;
       if (badge.image.complete && badge.image.naturalWidth > 0) {
+        if (badge.mono && this.pal.dark) c.filter = 'invert(1)';
         c.imageSmoothingEnabled = true;
         c.imageSmoothingQuality = 'high';
         c.drawImage(badge.image, x - 9, y - 9, 18, 18);

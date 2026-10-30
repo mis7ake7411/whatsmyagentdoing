@@ -47,11 +47,14 @@ function page(search = '') {
   const notifications = [];
   function Notification(title, options) { notifications.push({ title, options }); }
   Notification.permission = 'granted';
+  // This unit harness stops before the side-panel layout code. Browser checks
+  // exercise the real panel, while these stubs keep status/render coverage focused.
   const context = vm.createContext({ console, Intl: testIntl, Date: TestDate, EventSource: FakeEventSource, URLSearchParams, Notification,
     document: { getElementById: element, querySelectorAll: () => [], addEventListener() {}, documentElement: { dataset: {} }, body: { classList: { add() {} } } },
     Image: class {},
     navigator: { languages: ['en'] }, location: { search }, history: { replaceState() {} },
     localStorage: { getItem: () => null, setItem() {} }, office: null, refreshTip() {},
+    renderSide() {}, renderToday() {}, measureBar() {},
   });
   context.window = context;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), context);
@@ -90,7 +93,7 @@ test('dashboard connection and last update stay distinct from stale agent logs',
   assert.match(connectionText(p), /Connected/);
   assert.match(connectionText(p), /Last data update/);
   assert.match(p.elements.get('connTime').textContent, /\d{1,2}:\d{2}:\d{2}/);
-  p.run("state.view = 'list'; render()");
+  p.run("state.full = false; state.view = 'list'; render()");
   assert.match(p.elements.get('main').innerHTML, /No new log events/);
   assert.match(p.elements.get('main').innerHTML, /does not mean the task has stopped/);
 
@@ -193,7 +196,7 @@ test('stale activity stays Running and explicitly says freshness is not task com
 test('pending work appears only in Needs you, never twice in the working group', () => {
   const p = page();
   p.context.items = [session({ needsInput: true, pendingRequests: [{ id: 'q1', kind: 'approval', summary: 'Approve test run' }] })];
-  p.run("state.view = 'list'; state.data.sessions = items; render()");
+  p.run("state.full = false; state.view = 'list'; state.data.sessions = items; render()");
   const html = p.elements.get('main').innerHTML;
   assert.match(html, /Needs you/);
   assert.equal((html.match(/data-key="codex:one"/g) || []).length, 1);
@@ -203,7 +206,7 @@ test('pending work appears only in Needs you, never twice in the working group',
 test('unknown sessions remain visible without enabling the idle filter', () => {
   const p = page();
   p.context.items = [session({ status: 'unknown', lastEventAt: null })];
-  p.run("state.view = 'list'; state.data.sessions = items; render()");
+  p.run("state.full = false; state.view = 'list'; state.data.sessions = items; render()");
   assert.match(p.elements.get('main').innerHTML, /Status unknown/);
   assert.match(p.elements.get('main').innerHTML, /Log time unavailable/);
 });

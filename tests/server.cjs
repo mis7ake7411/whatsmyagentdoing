@@ -20,3 +20,19 @@ for (const scenario of ['assets', 'scenes', 'guards', 'streams']) {
     assert.equal(child.status, 0, child.stdout + child.stderr);
   });
 }
+
+test('silence marks active sessions stale without changing the observed status', () => {
+  const { snapshot } = require('../src/server');
+  const now = Date.now(), min = 60_000;
+  const s = (key, status, ago) => ({ agent: 'claude', id: key, status, lastEventAt: now - ago, cwd: '/w' });
+  const rows = snapshot({ sessions: () => [s('a', 'tool', 9 * min), s('b', 'tool', 12 * min), s('c', 'thinking', 9 * min),
+    s('d', 'thinking', 20 * min), s('e', 'waiting', 30 * min), s('f', 'tool', 50 * min)] }, { privacy: false }).sessions;
+  const by = Object.fromEntries(rows.map(r => [r.id, r]));
+  assert.equal(by.a.status, 'tool'); assert.equal(by.a.stale, false);
+  assert.equal(by.b.status, 'tool'); assert.equal(by.b.stale, true);
+  assert.equal(by.c.status, 'thinking'); assert.equal(by.c.stale, false);
+  assert.equal(by.d.status, 'thinking'); assert.equal(by.d.stale, true);
+  assert.equal(by.e.status, 'waiting'); assert.equal(by.e.stale, true);
+  assert.equal(by.f.status, 'tool'); assert.equal(by.f.stale, true);
+  assert.ok(rows.every(row => row.stuck === undefined), 'silence is not reported as a stuck status');
+});

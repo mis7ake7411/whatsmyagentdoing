@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whatsmyagentdoing · /myoffice</title>
+<meta name="description" content="Type /myoffice and watch every Claude Code, Codex, Gemini, Copilot and OMP agent on your machine work in a live little office. Local, read-only, zero setup.">
+<meta property="og:title" content="whatsmyagentdoing — see what every coding agent is doing">
+<meta property="og:description" content="A Claude Code / Codex skill: a live office of every agent on your machine.">
+<meta property="og:image" content="https://charonyuu.github.io/whatsmyagentdoing/site/img/scene-office.jpg">
+<meta name="theme-color" content="#0b0c0e">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E %3Crect width=%2232%22 height=%2232%22 rx=%229%22 fill=%22%23ff6a4d%22/%3E %3Crect x=%225.5%22 y=%227.5%22 width=%2221%22 height=%2215%22 rx=%224%22 fill=%22%23fff%22/%3E %3Cpath d=%22M13 22h6l1 3h-8z%22 fill=%22%23fff%22/%3E %3Crect x=%2210%22 y=%2224.6%22 width=%2212%22 height=%222.2%22 rx=%221.1%22 fill=%22%23fff%22/%3E %3Cellipse cx=%2212.6%22 cy=%2215%22 rx=%222.3%22 ry=%223%22 fill=%22%231a1a1a%22/%3E %3Cellipse cx=%2219.4%22 cy=%2215%22 rx=%222.3%22 ry=%223%22 fill=%22%231a1a1a%22/%3E %3Ccircle cx=%2213.3%22 cy=%2213.9%22 r=%22.8%22 fill=%22%23fff%22/%3E %3Ccircle cx=%2220.1%22 cy=%2213.9%22 r=%22.8%22 fill=%22%23fff%22/%3E %3Ccircle cx=%2225.2%22 cy=%227.6%22 r=%223.6%22 fill=%22%2322a874%22 stroke=%22%23ff6a4d%22 stroke-width=%221.6%22/%3E %3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #090909; --bar: #0b0c0e; --panel: #15171a; --panel2: #1a1c21; --inset: #101114; --line: #26282d; --line2: #303339;
+    --ink: #f2f3f5; --muted: #9a9ea6; --faint: #6b6f78;
+    --accent: #ff6a4d; --accent-bg: #3a1d16; --accent-tint: #2a1b15; --green-tint: #15201a;
+    --thinking: #8b6be6; --tool: #3b8ee0; --typing: #22a874; --waiting: #e8a23a; --done: #6fb35a; --error: #e2574c;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "DM Sans", "Noto Sans TC", "PingFang TC", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.65 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  a { color: inherit; }
+  /* height: auto keeps the aspect ratio when max-width shrinks an image with width/height attributes. */
+  img { max-width: 100%; height: auto; display: block; }
+  code { font-family: var(--mono); white-space: nowrap; }
+  h1, h2, h3 { text-wrap: balance; }
+  .sub, .lead { text-wrap: pretty; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  @media (max-width: 640px) { .wrap { padding: 0 16px; } }
+
+  /* nav */
+  nav { position: sticky; top: 0; z-index: 30; background: rgba(11, 12, 14, .88); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; text-decoration: none; }
+  .brand .mark { width: 30px; height: 30px; flex: none; border-radius: 9px; box-shadow: 0 0 18px rgba(255, 106, 77, .3); overflow: visible; }
+  /* The mark watches the room and its status light cycles Thinking → Running → Done. */
+  .mark .eyes { animation: glance 9s ease-in-out infinite; }
+  .mark .status { animation: status 9s steps(1) infinite; }
+  @keyframes glance { 0%, 30% { transform: none; } 36%, 52% { transform: translateX(1.6px); } 58%, 74% { transform: translateX(-1.6px); } 80%, 100% { transform: none; } }
+  @keyframes status { 0% { fill: #8b6be6; } 33.3% { fill: #3b8ee0; } 66.6% { fill: #22a874; } }
+  @media (prefers-reduced-motion: reduce) { .mark .eyes, .mark .status { animation: none; } }
+  svg.ic-svg, svg.cap-svg, svg.btn-svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .ic-svg { width: 20px; height: 20px; }
+  .cap-svg { width: 17px; height: 17px; color: var(--ink); }
+  .btn-svg { width: 15px; height: 15px; }
+  .brand code { font-size: 12px; font-weight: 500; color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 1px 8px; border-radius: 999px; }
+  .links { display: flex; gap: 6px; margin-left: auto; align-items: center; font-size: 14px; }
+  .links a.nl { text-decoration: none; color: var(--muted); padding: 6px 12px; border-radius: 999px; }
+  .links a.nl:hover { color: var(--ink); background: var(--panel); }
+  .lang { font: 500 13px var(--sans); color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+  .lang:hover { color: var(--ink); }
+  .gh { display: inline-flex; align-items: center; gap: 7px; text-decoration: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 13px; }
+  @media (max-width: 760px) { .links .hide-sm { display: none; } }
+  @media (max-width: 480px) { .brand code, .gh .t { display: none; } .brand { min-width: 0; } nav .wrap { gap: 10px; } }
+
+  /* hero */
+  .hero { position: relative; padding-top: 88px; padding-bottom: 24px; text-align: center; }
+  .hero > :not(.hero-bg) { position: relative; }
+  /* The blurred office: full-bleed behind the hero, darkened and faded out below the install box. */
+  .hero-bg { position: absolute; z-index: 0; top: -61px; left: 50%; width: 100vw; height: 900px; transform: translateX(-50%); overflow: hidden; pointer-events: none;
+    -webkit-mask-image: linear-gradient(#000 45%, transparent); mask-image: linear-gradient(#000 45%, transparent); }
+  .hero-bg video { width: 100%; height: 100%; object-fit: cover; transform: scale(1.12); opacity: .85; }
+  .hero-bg::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 44% 40% at 50% 36%, rgba(9, 9, 9, .6), rgba(9, 9, 9, .22) 72%, rgba(9, 9, 9, .3)); }
+  @media (max-width: 640px) { .hero-bg { height: 760px; } .hero-bg video { opacity: .7; } }
+  .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 14px 5px 6px; text-decoration: none; }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill .tag { font-size: 11.5px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 999px; padding: 1px 9px; }
+  h1 { font-size: clamp(32px, 5vw, 54px); line-height: 1.18; letter-spacing: -.02em; margin: 26px auto 16px; max-width: 820px; font-weight: 650; }
+  .sub { text-shadow: 0 1px 14px rgba(0, 0, 0, .7); font-size: clamp(15px, 1.8vw, 17px); color: #b4b8c0; max-width: 620px; margin: 0 auto 32px; line-height: 1.8; }
+  .sub code { font-size: .9em; color: var(--ink); background: var(--panel); border: 1px solid var(--line); padding: 1px 7px; border-radius: 7px; }
+
+  /* live ticker */
+  .ticker { display: inline-flex; flex-direction: column; gap: 6px; text-align: left; margin: 0 auto 32px; font: 13px var(--mono); color: var(--muted); }
+  .tick { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); min-width: min(520px, calc(100vw - 32px)); }
+  .tick img { width: 16px; height: 16px; }
+  .tick .who { color: var(--ink); min-width: 104px; }
+  .tick .st { display: inline-flex; align-items: center; gap: 6px; min-width: 128px; }
+  .tick .st i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .tick .act { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--faint); }
+  @media (max-width: 560px) { .tick .act { display: none; } .tick .who { min-width: 0; flex: 1; } }
+
+  /* install */
+  .install { max-width: 700px; margin: 0 auto; text-align: left; border: 1px solid var(--line); border-radius: 24px; background: var(--panel); overflow: hidden; }
+  .tabs { display: flex; gap: 4px; margin: 10px; padding: 4px; border-radius: 999px; background: var(--inset); overflow-x: auto; width: fit-content; max-width: calc(100% - 20px); }
+  .tabs button { font: 500 13px var(--sans); color: var(--muted); background: none; border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; white-space: nowrap; }
+  .tabs button:hover { color: var(--ink); }
+  @media (max-width: 520px) { .tabs { flex-wrap: wrap; border-radius: 18px; } .tabs button { padding: 6px 12px; } }
+  .tabs button.on { color: var(--ink); font-weight: 600; background: var(--accent-bg); }
+  .cmd { position: relative; padding: 8px 88px 20px 22px; font: 13.5px/1.75 var(--mono); color: #dfe1e6; white-space: pre-wrap; word-break: break-word; min-height: 60px; }
+  #installBox2 .cmd { padding-top: 20px; }
+  .cmd .p { color: var(--accent); user-select: none; }
+  .copy { position: absolute; top: 6px; right: 14px; font: 500 12.5px var(--sans); color: var(--muted); background: var(--inset); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+  #installBox2 .copy { top: 16px; }
+  .copy:hover { color: var(--ink); }
+  .copy.ok { color: var(--typing); }
+  .note { font-size: 13px; color: var(--faint); margin-top: 16px; }
+  .cta { display: flex; gap: 10px; justify-content: center; margin-top: 24px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font: 500 14px var(--sans); text-decoration: none; border-radius: 999px; padding: 10px 20px; border: 1px solid var(--line); color: var(--ink); background: var(--panel); }
+  .btn.primary { background: #eeeeee; border-color: #eeeeee; color: #1a1a1a; font-weight: 600; }
+  .btn:hover { filter: brightness(1.1); }
+
+  /* showcase */
+  .show { margin: 64px auto 0; max-width: 1080px; border-radius: 24px; border: 1px solid var(--line); background: var(--panel); padding: 10px; }
+  .bar { display: flex; align-items: center; gap: 7px; padding: 4px 8px 10px; }
+  .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--line2); }
+  .bar span { margin-left: 10px; font: 12px var(--mono); color: var(--faint); }
+  .stage { cursor: zoom-in; position: relative; border-radius: 16px; overflow: hidden; aspect-ratio: 1920 / 994; background: var(--inset); outline: none; touch-action: pan-y; }
+  .stage:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .slide { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .8s ease; }
+  .slide { pointer-events: none; display: block; }
+  .slide.on { opacity: 1; pointer-events: auto; z-index: 1; }
+  .snav { z-index: 2; }
+  .snav { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line2); background: rgba(16, 17, 20, .78); color: var(--ink); cursor: pointer; opacity: 0; transition: opacity .2s; backdrop-filter: blur(6px); }
+  .snav.prev { left: 14px; } .snav.next { right: 14px; }
+  .stage:hover .snav, .snav:focus-visible { opacity: 1; }
+  .snav .btn-svg { width: 18px; height: 18px; }
+  @media (hover: none) { .snav { display: none; } }
+  .dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; padding: 12px 4px 4px; }
+  .dot { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 7px; font: 500 13px var(--sans); color: var(--muted); background: var(--inset); border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px; cursor: pointer; }
+  .dot:hover { color: var(--ink); }
+  .dot.on { color: var(--ink); background: var(--accent-bg); border-color: #4a2419; }
+  .dot.on .cap-svg { color: var(--accent); }
+  .dot .prog { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--accent); }
+  .dot.on.run .prog { animation: prog var(--dur, 5s) linear forwards; }
+  .show.paused .dot.on .prog { animation-play-state: paused; }
+  @keyframes prog { to { width: 100%; } }
+  @media (max-width: 560px) { .dot span { display: none; } .dot { padding: 7px 10px; } .dot.on span { display: inline; } }
+  @media (max-width: 640px) { .hero { padding-top: 56px; } .show { margin-top: 44px; padding: 6px; border-radius: 18px; } .stage { border-radius: 12px; } }
+
+  /* agents strip */
+  .agents { padding: 64px 0 0; text-align: center; }
+  .marquee { position: relative; overflow: hidden; margin-top: 18px; -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent); }
+  .track { display: flex; width: max-content; animation: marquee 36s linear infinite; }
+  .marquee + .marquee { margin-top: 10px; }
+  .marquee.rev .track { animation-direction: reverse; animation-duration: 42s; }
+  .agents:hover .track { animation-play-state: paused; }
+  .logos { display: flex; gap: 10px; padding-right: 10px; }
+  @keyframes marquee { to { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .marquee { -webkit-mask-image: none; mask-image: none; }
+    .track { animation: none; width: auto; justify-content: center; }
+    .track .logos { flex-wrap: wrap; justify-content: center; padding: 0; }
+    .track .logos[aria-hidden] { display: none; }
+    .marquee.rev { display: none; }
+  }
+  .logo { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 9px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); font-size: 14px; color: var(--muted); }
+  .logo img { width: 18px; height: 18px; }
+  .logo img.mono { filter: invert(1); }
+
+  /* sections */
+  section.wrap { margin-top: 120px; }
+  @media (max-width: 640px) { section.wrap { margin-top: 84px; } }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; color: var(--muted); }
+  .eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .agents .eyebrow::before { display: none; }
+  h2 { font-size: clamp(24px, 3.2vw, 34px); letter-spacing: -.015em; line-height: 1.3; margin: 10px 0 12px; font-weight: 650; }
+  .lead { color: var(--muted); max-width: 620px; font-size: 16px; margin: 0; line-height: 1.8; }
+  .head { margin-bottom: 32px; }
+
+  /* status legend */
+  .states { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .state { padding: 16px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); }
+  .state b { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .state b i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .state em { font-style: normal; color: var(--ink); }
+  .state span { display: block; margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .state code { font-size: 12px; }
+  @media (max-width: 920px) { .states { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 520px) { .states { grid-template-columns: repeat(2, 1fr); } }
+
+  /* features */
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .card { padding: 22px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
+  .card .ic { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: var(--inset); border: 1px solid var(--line); color: var(--muted); margin-bottom: 16px; }
+  .card.new .ic { color: var(--accent); background: var(--accent-tint); border-color: #3d241c; }
+  .card h3 { font-size: 15.5px; margin: 0 0 6px; font-weight: 600; }
+  .card p { font-size: 14px; color: var(--muted); margin: 0; line-height: 1.65; }
+  .card code { font-size: 12.5px; color: var(--ink); background: var(--inset); padding: 1px 6px; border-radius: 6px; }
+  .card.new h3::after { content: "NEW"; font-size: 10px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 999px; padding: 2px 7px; margin-left: 8px; vertical-align: 2px; }
+  .card.new { background: linear-gradient(var(--panel), var(--panel)) padding-box, linear-gradient(160deg, rgba(255, 106, 77, .35), var(--line) 45%) border-box; border-color: transparent; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+
+  /* split rows */
+  .split { display: grid; grid-template-columns: 1fr 1.25fr; gap: 56px; align-items: center; }
+  .split.rev { grid-template-columns: 1.25fr 1fr; }
+  .split.rev .txt { order: 2; }
+  .frame { border-radius: 24px; border: 1px solid var(--line); background: var(--panel); padding: 8px; }
+  .frame img { border-radius: 16px; }
+  .ticks { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 10px; }
+  .ticks li { display: flex; gap: 10px; color: var(--muted); font-size: 15px; }
+  .ticks li::before { content: ""; flex: none; width: 16px; height: 16px; margin-top: 4px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ff6a4d' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / contain no-repeat; }
+  .today-img { max-width: 340px; margin: 0 auto; }
+  @media (max-width: 900px) { .split, .split.rev { grid-template-columns: 1fr; gap: 28px; } .split.rev .txt { order: 0; } }
+
+  /* scenes */
+  .scenes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .scene { position: relative; border-radius: 22px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); cursor: zoom-in; padding: 0; text-align: left; color: inherit; font: inherit; }
+  .scene img { aspect-ratio: 1600 / 861; object-fit: cover; width: 100%; transition: transform .5s ease; }
+  .scene:hover img { transform: scale(1.03); }
+  .scene .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 16px 12px; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14.5px; background: linear-gradient(transparent, rgba(5, 6, 8, .88)); }
+  .scene .cap small { margin-left: auto; font: 500 11.5px var(--mono); color: var(--muted); }
+  .scene.halloween { border-color: rgba(255, 106, 77, .5); }
+  .scene.halloween .cap-svg { color: var(--accent); }
+  .scene.halloween small { color: #fff; background: var(--accent); font-family: var(--sans); font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+  @media (max-width: 900px) { .scenes { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 520px) { .scenes { grid-template-columns: 1fr; } }
+
+  /* how */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; counter-reset: s; }
+  .step { padding: 24px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
+  .step::before { counter-increment: s; content: counter(s); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: 13px; font-weight: 700; color: var(--accent); background: var(--accent-tint); }
+  .step h3 { margin: 14px 0 6px; font-size: 16.5px; font-weight: 600; }
+  .step p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+  .step code { font-size: 12.5px; color: var(--ink); background: var(--inset); padding: 1px 6px; border-radius: 6px; word-break: break-all; }
+  .privacy { margin-top: 12px; display: flex; gap: 16px; align-items: center; padding: 20px 24px; border: 1px solid #1f3326; border-radius: 22px; background: var(--green-tint); }
+  .priv-ic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: #1b2c21; color: var(--typing); }
+  .privacy p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.7; }
+  .privacy p strong { color: var(--ink); }
+  .privacy code { font-size: 12.5px; color: var(--ink); }
+  @media (max-width: 800px) { .steps { grid-template-columns: 1fr; } }
+
+  /* faq */
+  .faq { display: grid; gap: 10px; max-width: 820px; }
+  details.q { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); padding: 0 20px; }
+  details.q summary { cursor: pointer; list-style: none; padding: 17px 0; font-weight: 600; display: flex; justify-content: space-between; gap: 16px; }
+  details.q summary::-webkit-details-marker { display: none; }
+  details.q summary::after { content: "+"; color: var(--faint); font-weight: 400; font-size: 20px; line-height: 1; }
+  details.q[open] summary::after { content: "–"; }
+  details.q p { margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.75; }
+  details.q code { font-size: 13px; color: var(--ink); background: var(--inset); padding: 1px 6px; border-radius: 6px; }
+
+  /* final cta + footer */
+  .final { margin-top: 120px; text-align: center; padding: 60px 24px; border: 1px solid var(--line); border-radius: 28px; background: var(--panel); }
+  .final h2 { margin-top: 0; }
+  .final .install { background: var(--inset); }
+  footer { margin-top: 64px; padding: 28px 0 48px; color: var(--faint); font-size: 13.5px; border-top: 1px solid var(--line); }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 28px; justify-content: space-between; }
+  footer a { color: var(--muted); }
+
+  /* lightbox */
+  .lb { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 24px; background: rgba(4, 4, 5, .9); backdrop-filter: blur(6px); cursor: zoom-out; }
+  .lb.on { display: grid; }
+  .lb img, .lb video { max-height: 88vh; max-width: 100%; border-radius: 16px; border: 1px solid var(--line); display: block; }
+  .lb [hidden] { display: none; }
+  .lb p { color: var(--muted); text-align: center; margin: 12px 0 0; }
+
+  /* Hidden only once the script runs, so the page still reads without JavaScript. */
+  .js .reveal { opacity: 0; transform: translateY(14px); transition: opacity .7s ease, transform .7s ease; }
+  .js .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .js .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } .scene img { transition: none; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-office" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/><path d="M7 8.5h4M7 11.5h7"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5v-5a6 6 0 0 1 12 0v5l1.6 2H4.4z"/><path d="M10 21a2.2 2.2 0 0 0 4 0"/></symbol>
+    <symbol id="i-approve" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.6c0 4.4-3.1 8.2-7.5 9.4-4.4-1.2-7.5-5-7.5-9.4V6z"/><path d="M8.8 12.2l2.3 2.3 4.4-4.6"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3.5 20.5h17"/><rect x="5" y="11" width="3.2" height="7" rx="1"/><rect x="10.4" y="6" width="3.2" height="12" rx="1"/><rect x="15.8" y="13.5" width="3.2" height="4.5" rx="1"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.2a2 2 0 0 1 3.4 0l7.6 13.1A2 2 0 0 1 19.6 20H4.4a2 2 0 0 1-1.7-2.7z"/><path d="M12 9.5v4.2"/><circle cx="12" cy="16.6" r=".4" fill="currentColor"/></symbol>
+    <symbol id="i-pip" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.2"/><rect x="12.2" y="11.6" width="6.3" height="4.9" rx="1.1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.3 10.5V8a3.7 3.7 0 0 1 7.4 0v2.5"/><path d="M12 14.6v2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2M12 3.2c2.6 2.6 3.7 5.6 3.7 8.8s-1.1 6.2-3.7 8.8M12 3.2C9.4 5.8 8.3 8.8 8.3 12s1.1 6.2 3.7 8.8"/></symbol>
+    <symbol id="i-pumpkin" viewBox="0 0 24 24"><path d="M12 7.2c-4.9 0-8 2.7-8 6.6S7.1 20.5 12 20.5s8-2.8 8-6.7-3.1-6.6-8-6.6z"/><path d="M12 7.2c-1.9 1.9-1.9 11.4 0 13.3M12 7.2c1.9 1.9 1.9 11.4 0 13.3"/><path d="M12 7.2c0-2 .8-3.2 2.4-3.8"/></symbol>
+    <symbol id="i-building" viewBox="0 0 24 24"><rect x="5" y="3.2" width="14" height="17.6" rx="1.6"/><path d="M9 7.2h1.8M13.2 7.2H15M9 10.8h1.8M13.2 10.8H15M9 14.4h1.8M13.2 14.4H15"/><path d="M10.4 20.8v-3h3.2v3"/></symbol>
+    <symbol id="i-ship" viewBox="0 0 24 24"><path d="M3.5 15.5h17l-2.3 4.3H5.8z"/><path d="M12 3.5v12"/><path d="M12 4.5l5.8 8.3H12M12 6.8L7 12.8h5"/></symbol>
+    <symbol id="i-cup" viewBox="0 0 24 24"><path d="M5 9h11v5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/><path d="M16 10.5h1.4a2.4 2.4 0 0 1 0 4.8H16"/><path d="M8.5 3.5c-.8 1 .8 2 0 3M11.8 3.5c-.8 1 .8 2 0 3"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path d="M12 2.8c3.6 1.9 5.6 5.6 5.6 9.6l-1.9 3.3H8.3l-1.9-3.3c0-4 2-7.7 5.6-9.6z"/><circle cx="12" cy="9.8" r="1.9"/><path d="M9.6 18.6l-.9 2.3M14.4 18.6l.9 2.3M12 18.8v2.6"/></symbol>
+    <symbol id="i-castle" viewBox="0 0 24 24"><path d="M4 20.5V9.5h2.8V6.8h2.4v2.7h1.6V6.8h2.4v2.7h1.6V6.8h2.4v2.7H20v11z"/><path d="M10 20.5v-4.2a2 2 0 0 1 4 0v4.2"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.6l2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.5l-5.1 2.7 1-5.6-4.1-4 5.7-.8z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M14.5 5.5L8 12l6.5 6.5"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9.5 5.5L16 12l-6.5 6.5"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M6.5 12.5L12 18l5.5-5.5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.6c0 4.4-3.1 8.2-7.5 9.4-4.4-1.2-7.5-5-7.5-9.4V6z"/><rect x="9" y="11" width="6" height="4.6" rx="1"/><path d="M10.2 11V9.7a1.8 1.8 0 0 1 3.6 0V11"/></symbol>
+  </defs>
+</svg>
+<nav id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="9" fill="#ff6a4d"/>
+        <rect x="5.5" y="7.5" width="21" height="15" rx="4" fill="#fff"/>
+        <path d="M13 22h6l1 3h-8z" fill="#fff"/>
+        <rect x="10" y="24.6" width="12" height="2.2" rx="1.1" fill="#fff"/>
+        <g class="eyes"><ellipse cx="12.6" cy="15" rx="2.3" ry="3" fill="#1a1a1a"/><ellipse cx="19.4" cy="15" rx="2.3" ry="3" fill="#1a1a1a"/><circle cx="13.3" cy="13.9" r=".8" fill="#fff"/><circle cx="20.1" cy="13.9" r=".8" fill="#fff"/></g>
+        <circle class="status" cx="25.2" cy="7.6" r="3.6" fill="#22a874" stroke="#ff6a4d" stroke-width="1.6"/>
+      </svg>whatsmyagentdoing <code>/myoffice</code></a>
+    <div class="links">
+      <a class="nl hide-sm" href="#features" data-i="navFeatures">Features</a>
+      <a class="nl hide-sm" href="#scenes" data-i="navScenes">Scenes</a>
+      <a class="nl hide-sm" href="#install" data-i="navInstall">Install</a>
+      <button class="lang" id="langBtn" type="button">中文</button>
+      <a class="gh" href="https://github.com/Charonyuu/whatsmyagentdoing" aria-label="GitHub">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span class="t">GitHub</span>
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+  <header class="hero wrap">
+    <div class="hero-bg" aria-hidden="true">
+      <video id="heroBg" muted loop playsinline preload="none" poster="site/video/hero-bg.jpg"></video>
+    </div>
+    <a class="pill" href="#scenes"><span class="tag">v0.4</span><span data-i="pill">New: <b>Haunted Hollow</b>, approval alerts and a Today panel</span></a>
+    <h1 data-i="h1">See what every coding agent is doing.</h1>
+    <p class="sub" data-i="sub">Type <code>/myoffice</code>. Every Claude Code, Codex, Gemini, Copilot and OMP session on your machine walks into a live little office: thinking, running tools, waiting for you, or done.</p>
+
+    <div class="ticker" id="ticker" aria-hidden="true"></div>
+
+    <div class="install" id="installBox">
+      <div class="tabs" role="tablist" id="tabs">
+        <button class="on" data-k="ask" data-i="tabAsk">Ask your agent</button>
+        <button data-k="claude">Claude Code</button>
+        <button data-k="codex">Codex</button>
+        <button data-k="cli" data-i="tabCli">Without a skill</button>
+      </div>
+      <div class="cmd" id="cmd"></div>
+    </div>
+    <p class="note" data-i="note">Node.js 18+ · no npm install · no API keys · macOS, Linux and Windows</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/Charonyuu/whatsmyagentdoing" ><svg class="btn-svg" aria-hidden="true"><use href="#i-star"/></svg><span data-i="ctaStar">Star on GitHub</span></a>
+      <a class="btn" href="#features" ><span data-i="ctaTour">Take the tour</span><svg class="btn-svg" aria-hidden="true"><use href="#i-down"/></svg></a>
+    </div>
+
+    <div class="show reveal" id="show" aria-roledescription="carousel" aria-label="3D scenes">
+      <div class="bar"><i></i><i></i><i></i><span id="showUrl">localhost:4545</span></div>
+      <div class="stage" id="stage" tabindex="0">
+          <video class="slide on" muted loop playsinline preload="none" poster="site/video/office.jpg" data-src="site/video/office.mp4" data-k="office" width="1920" height="994"></video>
+          <video class="slide" muted loop playsinline preload="none" poster="site/video/graveyard.jpg" data-src="site/video/graveyard.mp4" data-k="graveyard" width="1920" height="994"></video>
+          <video class="slide" muted loop playsinline preload="none" poster="site/video/pirate.jpg" data-src="site/video/pirate.mp4" data-k="pirate" width="1920" height="994"></video>
+          <video class="slide" muted loop playsinline preload="none" poster="site/video/cafe.jpg" data-src="site/video/cafe.mp4" data-k="cafe" width="1920" height="994"></video>
+          <video class="slide" muted loop playsinline preload="none" poster="site/video/station.jpg" data-src="site/video/station.mp4" data-k="station" width="1920" height="994"></video>
+          <video class="slide" muted loop playsinline preload="none" poster="site/video/castle.jpg" data-src="site/video/castle.mp4" data-k="castle" width="1920" height="994"></video>
+        <button class="snav prev" type="button" id="prevBtn" aria-label="Previous scene"><svg class="btn-svg" aria-hidden="true"><use href="#i-left"/></svg></button>
+        <button class="snav next" type="button" id="nextBtn" aria-label="Next scene"><svg class="btn-svg" aria-hidden="true"><use href="#i-right"/></svg></button>
+      </div>
+      <div class="dots" id="dots" role="tablist">
+        <button class="dot on" type="button" role="tab" aria-selected="true" data-n="0"><svg class="cap-svg" aria-hidden="true"><use href="#i-building"/></svg><span data-i="scOffice">Office</span><i class="prog"></i></button>
+        <button class="dot" type="button" role="tab" aria-selected="false" data-n="1"><svg class="cap-svg" aria-hidden="true"><use href="#i-pumpkin"/></svg><span data-i="scGrave">Haunted Hollow</span><i class="prog"></i></button>
+        <button class="dot" type="button" role="tab" aria-selected="false" data-n="2"><svg class="cap-svg" aria-hidden="true"><use href="#i-ship"/></svg><span data-i="scPirate">Pirate Cove</span><i class="prog"></i></button>
+        <button class="dot" type="button" role="tab" aria-selected="false" data-n="3"><svg class="cap-svg" aria-hidden="true"><use href="#i-cup"/></svg><span data-i="scCafe">Café</span><i class="prog"></i></button>
+        <button class="dot" type="button" role="tab" aria-selected="false" data-n="4"><svg class="cap-svg" aria-hidden="true"><use href="#i-rocket"/></svg><span data-i="scStation">Space Station</span><i class="prog"></i></button>
+        <button class="dot" type="button" role="tab" aria-selected="false" data-n="5"><svg class="cap-svg" aria-hidden="true"><use href="#i-castle"/></svg><span data-i="scCastle">Castle</span><i class="prog"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="agents wrap">
+    <div class="eyebrow" data-i="worksWith">Works with the agents you already run</div>
+    <div class="marquee" id="marquee">
+      <div class="track">
+        <div class="logos">
+          <span class="logo"><img src="site/img/agents/claude.png" alt="">Claude Code</span>
+          <span class="logo"><img src="site/img/agents/codex.png" alt="">Codex</span>
+          <span class="logo"><img src="site/img/agents/gemini.png" alt="">Gemini CLI</span>
+          <span class="logo"><img class="mono" src="site/img/agents/copilot.svg" alt="">Copilot CLI</span>
+          <span class="logo"><img src="site/img/agents/omp.svg" alt="">OMP</span>
+          <span class="logo"><img class="mono" src="site/img/agents/kimi.svg" alt="">Kimi Code</span>
+          <span class="logo"><img src="site/img/agents/dsh.svg" alt="">DeepSeek Harness</span>
+          <span class="logo"><img class="mono" src="site/img/agents/grok.svg" alt="">Grok Build</span>
+        </div>
+        <div class="logos" aria-hidden="true">
+          <span class="logo"><img src="site/img/agents/claude.png" alt="">Claude Code</span>
+          <span class="logo"><img src="site/img/agents/codex.png" alt="">Codex</span>
+          <span class="logo"><img src="site/img/agents/gemini.png" alt="">Gemini CLI</span>
+          <span class="logo"><img class="mono" src="site/img/agents/copilot.svg" alt="">Copilot CLI</span>
+          <span class="logo"><img src="site/img/agents/omp.svg" alt="">OMP</span>
+          <span class="logo"><img class="mono" src="site/img/agents/kimi.svg" alt="">Kimi Code</span>
+          <span class="logo"><img src="site/img/agents/dsh.svg" alt="">DeepSeek Harness</span>
+          <span class="logo"><img class="mono" src="site/img/agents/grok.svg" alt="">Grok Build</span>
+        </div>
+      </div>
+    </div>
+    <div class="marquee rev" aria-hidden="true">
+      <div class="track">
+        <div class="logos">
+          <span class="logo"><img src="site/img/agents/claude.png" alt="">Claude Code</span>
+          <span class="logo"><img src="site/img/agents/codex.png" alt="">Codex</span>
+          <span class="logo"><img src="site/img/agents/gemini.png" alt="">Gemini CLI</span>
+          <span class="logo"><img class="mono" src="site/img/agents/copilot.svg" alt="">Copilot CLI</span>
+          <span class="logo"><img src="site/img/agents/omp.svg" alt="">OMP</span>
+          <span class="logo"><img class="mono" src="site/img/agents/kimi.svg" alt="">Kimi Code</span>
+          <span class="logo"><img src="site/img/agents/dsh.svg" alt="">DeepSeek Harness</span>
+          <span class="logo"><img class="mono" src="site/img/agents/grok.svg" alt="">Grok Build</span>
+        </div>
+        <div class="logos" aria-hidden="true">
+          <span class="logo"><img src="site/img/agents/claude.png" alt="">Claude Code</span>
+          <span class="logo"><img src="site/img/agents/codex.png" alt="">Codex</span>
+          <span class="logo"><img src="site/img/agents/gemini.png" alt="">Gemini CLI</span>
+          <span class="logo"><img class="mono" src="site/img/agents/copilot.svg" alt="">Copilot CLI</span>
+          <span class="logo"><img src="site/img/agents/omp.svg" alt="">OMP</span>
+          <span class="logo"><img class="mono" src="site/img/agents/kimi.svg" alt="">Kimi Code</span>
+          <span class="logo"><img src="site/img/agents/dsh.svg" alt="">DeepSeek Harness</span>
+          <span class="logo"><img class="mono" src="site/img/agents/grok.svg" alt="">Grok Build</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="wrap" id="states">
+    <div class="head reveal">
+      <div class="eyebrow" data-i="statesEyebrow">One glance</div>
+      <h2 data-i="statesH">Know who's working, and who's waiting on you.</h2>
+      <p class="lead" data-i="statesLead">Each session turns its latest log event into a status, updated live over Server-Sent Events.</p>
+    </div>
+    <div class="states reveal">
+      <div class="state"><b style="color:var(--thinking)"><i></i><em data-i="sThinking">Thinking</em></b><span data-i="sThinkingD">Reasoning or reading a tool result</span></div>
+      <div class="state"><b style="color:var(--tool)"><i></i><em data-i="sTool">Running</em></b><span data-i="sToolD">A tool call is in flight: <code>Bash: npm test</code></span></div>
+      <div class="state"><b style="color:var(--typing)"><i></i><em data-i="sTyping">Writing reply</em></b><span data-i="sTypingD">The answer has started landing</span></div>
+      <div class="state"><b style="color:var(--waiting)"><i></i><em data-i="sWaiting">Waiting for you</em></b><span data-i="sWaitingD">A question or an approval</span></div>
+      <div class="state"><b style="color:var(--done)"><i></i><em data-i="sDone">Done</em></b><span data-i="sDoneD">Turn finished, with the last reply</span></div>
+      <div class="state"><b style="color:var(--error)"><i></i><em data-i="sStuck">No progress</em></b><span data-i="sStuckD">Silent too long: a hung tool or a lost prompt</span></div>
+    </div>
+  </section>
+
+  <section class="wrap" id="features">
+    <div class="head reveal">
+      <div class="eyebrow" data-i="featEyebrow">Features</div>
+      <h2 data-i="featH">A dashboard you'll actually leave open.</h2>
+    </div>
+    <div class="grid reveal">
+      <div class="card"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-office"/></svg></div><h3 data-i="f1">A live office</h3><p data-i="f1d">A hand-drawn 2D canvas or a 3D office with real-time light and shadows. Working agents sit at desks; finished ones grab coffee, nap or play ping-pong.</p></div>
+      <div class="card"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-bell"/></svg></div><h3 data-i="f2">Needs you, first</h3><p data-i="f2d">Sessions sort into Needs you → Working → Finished, with browser notifications and an optional chime.</p></div>
+      <div class="card new"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-approve"/></svg></div><h3 data-i="f3">Approval prompts</h3><p data-i="f3d">An optional Claude Code hook shows permission prompts as “Waiting for you” instead of “Running”. <code>--install-hook</code></p></div>
+      <div class="card new"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-chart"/></svg></div><h3 data-i="f4">Today at a glance</h3><p data-i="f4d">Turns, tokens and your busiest projects today, plus a context-window bar on every card.</p></div>
+      <div class="card new"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-alert"/></svg></div><h3 data-i="f5">Stuck detection</h3><p data-i="f5d">A tool or a thought that goes silent for too long gets flagged before you waste an hour waiting on it.</p></div>
+      <div class="card"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-pip"/></svg></div><h3 data-i="f6">Pop it out</h3><p data-i="f6d">An always-on-top picture-in-picture window of the office or the list, synced with the main tab.</p></div>
+      <div class="card"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-lock"/></svg></div><h3 data-i="f7">Private by design</h3><p data-i="f7d">Read-only, bound to 127.0.0.1, nothing leaves your machine. <code>--private</code> hides prompts for screen sharing.</p></div>
+      <div class="card"><div class="ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-globe"/></svg></div><h3 data-i="f8">Speaks your language</h3><p data-i="f8d">Nine languages, picked from the language you write your prompts in.</p></div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="split">
+      <div class="txt reveal">
+        <div class="eyebrow" data-i="listEyebrow">List view</div>
+        <h2 data-i="listH">Prefer plain cards?</h2>
+        <p class="lead" data-i="listLead">Switch to the list: grouped by what needs you, with a live turn timer and the agent's latest prompt and reply.</p>
+        <ul class="ticks">
+          <li data-i="l1">One-click copy of the resume command for each session</li>
+          <li data-i="l2">Filter by agent, show or hide subagents and idle sessions</li>
+          <li data-i="l3">The tab title counts working agents, so you can watch from another tab</li>
+        </ul>
+      </div>
+      <div class="frame reveal"><img src="site/img/list.jpg" width="1600" height="1075" alt="The list view with grouped session cards" loading="lazy"></div>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <div class="split rev">
+      <div class="txt reveal">
+        <div class="eyebrow" data-i="todayEyebrow">New in 0.4</div>
+        <h2 data-i="todayH">How much did the team do today?</h2>
+        <p class="lead" data-i="todayLead">The Today panel adds up turns and tokens from Claude and Codex usage records since midnight, by agent and by project.</p>
+        <ul class="ticks">
+          <li data-i="t1">Context bars turn amber at 60% and red at 85%, before a compaction surprises you</li>
+          <li data-i="t2">Counted from your local logs only: nothing is sent anywhere</li>
+        </ul>
+      </div>
+      <div class="frame today-img reveal"><img src="site/img/today.jpg" width="680" height="908" alt="The Today panel: turns, tokens, agents and busiest projects" loading="lazy"></div>
+    </div>
+  </section>
+
+  <section class="wrap" id="scenes">
+    <div class="head reveal">
+      <div class="eyebrow" data-i="scenesEyebrow">Scenes</div>
+      <h2 data-i="scenesH">Move the team somewhere fun.</h2>
+      <p class="lead" data-i="scenesLead">The office is built in. Other 3D scenes are 100–230 KB packs, downloaded only when you pick one and checked against a pinned SHA-256.</p>
+    </div>
+    <div class="scenes reveal" id="sceneGrid">
+      <button class="scene halloween" data-img="site/img/scene-graveyard.jpg"><img src="site/img/scene-graveyard.jpg" alt="" loading="lazy"><span class="cap"><svg class="cap-svg" aria-hidden="true"><use href="#i-pumpkin"/></svg><span data-i="scGrave">Haunted Hollow</span><small data-i="newSmall">NEW</small></span></button>
+      <button class="scene" data-img="site/img/scene-office.jpg"><img src="site/img/scene-office.jpg" alt="" loading="lazy"><span class="cap"><svg class="cap-svg" aria-hidden="true"><use href="#i-building"/></svg><span data-i="scOffice">Office</span><small data-i="builtIn">built in</small></span></button>
+      <button class="scene" data-img="site/img/scene-pirate.jpg"><img src="site/img/scene-pirate.jpg" alt="" loading="lazy"><span class="cap"><svg class="cap-svg" aria-hidden="true"><use href="#i-ship"/></svg><span data-i="scPirate">Pirate Cove</span><small>--scene pirate</small></span></button>
+      <button class="scene" data-img="site/img/scene-cafe.jpg"><img src="site/img/scene-cafe.jpg" alt="" loading="lazy"><span class="cap"><svg class="cap-svg" aria-hidden="true"><use href="#i-cup"/></svg><span data-i="scCafe">Café</span><small>--scene cafe</small></span></button>
+      <button class="scene" data-img="site/img/scene-station.jpg"><img src="site/img/scene-station.jpg" alt="" loading="lazy"><span class="cap"><svg class="cap-svg" aria-hidden="true"><use href="#i-rocket"/></svg><span data-i="scStation">Space Station</span><small>--scene station</small></span></button>
+      <button class="scene" data-img="site/img/scene-castle.jpg"><img src="site/img/scene-castle.jpg" alt="" loading="lazy"><span class="cap"><svg class="cap-svg" aria-hidden="true"><use href="#i-castle"/></svg><span data-i="scCastle">Castle</span><small>--scene castle</small></span></button>
+    </div>
+  </section>
+
+  <section class="wrap" id="how">
+    <div class="head reveal">
+      <div class="eyebrow" data-i="howEyebrow">How it works</div>
+      <h2 data-i="howH">No hooks required. No config. No keys.</h2>
+      <p class="lead" data-i="howLead">Your agents already write every message and tool call to disk. whatsmyagentdoing just reads along.</p>
+    </div>
+    <div class="steps reveal">
+      <div class="step"><h3 data-i="h1t">Tail the logs</h3><p data-i="h1d">Session logs under <code>~/.claude</code>, <code>~/.codex</code>, <code>~/.gemini</code> and friends are read incrementally, never written.</p></div>
+      <div class="step"><h3 data-i="h2t">Turn events into states</h3><p data-i="h2d">The latest event becomes Thinking, Running, Waiting or Done. Large logs read only their head and tail.</p></div>
+      <div class="step"><h3 data-i="h3t">Stream to your browser</h3><p data-i="h3d">A tiny local server pushes snapshots over Server-Sent Events to the page. That's the whole stack.</p></div>
+    </div>
+    <div class="privacy reveal"><span class="priv-ic"><svg class="ic-svg" aria-hidden="true"><use href="#i-shield"/></svg></span><p data-i="privacy"><strong>Nothing leaves your machine.</strong> The server binds to 127.0.0.1 and rejects requests not addressed to localhost. The only network call is an optional version check, which you can turn off with <code>WMAD_NO_UPDATE_CHECK=1</code>.</p></div>
+  </section>
+
+  <section class="wrap" id="faq">
+    <div class="head reveal">
+      <div class="eyebrow">FAQ</div>
+      <h2 data-i="faqH">Questions</h2>
+    </div>
+    <div class="faq reveal">
+      <details class="q"><summary data-i="q1">Does it slow my agents down or change anything?</summary><p data-i="a1">No. It only reads log files. The optional approval hook writes one tiny marker file per permission prompt into <code>~/.whatsmyagentdoing</code> and nothing else.</p></details>
+      <details class="q"><summary data-i="q2">Why does Claude Code show “Running” while it waits for my approval?</summary><p data-i="a2">Claude Code doesn't log permission prompts. Run <code>node bin/cli.js --install-hook</code> once to add an optional Notification hook, and they'll show as “Waiting for you”. <code>--uninstall-hook</code> removes it.</p></details>
+      <details class="q"><summary data-i="q3">How do I update?</summary><p data-i="a3">The page tells you when a new version is out. Click Update, run <code>/myoffice update</code>, or <code>git pull</code> in the skill folder.</p></details>
+      <details class="q"><summary data-i="q4">Can I share my screen with it open?</summary><p data-i="a4">Yes. Start it with <code>--private</code> to hide prompts, replies and titles and show status only.</p></details>
+      <details class="q"><summary data-i="q5">My agent isn't listed. Can it be supported?</summary><p data-i="a5">If it writes session logs to disk, probably. Open an issue with the log location and a short sample with the content removed.</p></details>
+    </div>
+  </section>
+
+  <div class="wrap">
+    <div class="final reveal" id="install">
+      <h2 data-i="finalH">Open your office.</h2>
+      <p class="lead" style="margin:0 auto 26px" data-i="finalLead">Paste one line into Claude Code or Codex, then type /myoffice.</p>
+      <div class="install" id="installBox2"><div class="cmd" id="cmd2"></div></div>
+      <div class="cta"><a class="btn primary" href="https://github.com/Charonyuu/whatsmyagentdoing" data-i="ctaRepo">View on GitHub</a></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span data-i="footL">MIT licensed · 3D models by <a href="https://kenney.nl">Kenney</a> (CC0) · Brand marks belong to their owners.</span>
+    <span><a href="https://github.com/Charonyuu/whatsmyagentdoing">GitHub</a> · <a href="https://github.com/Charonyuu/whatsmyagentdoing/issues" data-i="issues">Issues</a></span>
+  </div>
+</footer>
+
+<div class="lb" id="lb" role="dialog" aria-modal="true"><div><img id="lbImg" alt=""><video id="lbVid" muted loop playsinline></video><p id="lbCap"></p></div></div>
+
+<script>
+document.documentElement.classList.add('js');
+const REPO = 'https://github.com/Charonyuu/whatsmyagentdoing';
+const CMDS = {
+  ask: { en: `Install the myoffice skill from ${REPO}: clone it with \`git clone --depth 1\` into ~/.claude/skills/myoffice (for Codex: ~/.codex/skills/myoffice), check that \`node --version\` is 18 or newer, then tell me to start a new session and type /myoffice.`,
+    zh: `請從 ${REPO} 安裝 myoffice skill：用 \`git clone --depth 1\` 複製到 ~/.claude/skills/myoffice（Codex 用 ~/.codex/skills/myoffice），確認 \`node --version\` 是 18 以上，然後提醒我開新的 session 並輸入 /myoffice。` },
+  claude: `git clone --depth 1 ${REPO} ~/.claude/skills/myoffice`,
+  codex: `git clone --depth 1 ${REPO} ~/.codex/skills/myoffice`,
+  cli: `git clone --depth 1 ${REPO}\ncd whatsmyagentdoing && node bin/cli.js`,
+};
+
+const ZH = {
+  navFeatures: '功能', navScenes: '場景', navInstall: '安裝',
+  pill: '新功能：<b>萬聖節墓園</b>、批准提醒和今日總結',
+  h1: '看看每個 coding agent 正在做什麼。',
+  sub: '輸入 <code>/myoffice</code>，你電腦上所有 Claude Code、Codex、Gemini、Copilot 和 OMP 的 session 都會走進一間即時的小辦公室：思考中、執行工具、等你回應，或是已經完成。',
+  tabAsk: '叫 agent 幫你裝', tabCli: '不用 skill',
+  note: 'Node.js 18 以上 · 不用 npm install · 不用 API key · 支援 macOS、Linux、Windows',
+  ctaStar: '在 GitHub 按星星', ctaTour: '往下看看',
+  worksWith: '支援你正在用的 agent',
+  statesEyebrow: '一眼看懂', statesH: '誰在工作、誰在等你，一目了然。', statesLead: '每個 session 都會把最新的 log 事件轉成狀態，透過 Server-Sent Events 即時更新。',
+  sThinking: '思考中', sThinkingD: '推理中，或在讀工具結果', sTool: '執行中', sToolD: '正在跑工具：<code>Bash: npm test</code>',
+  sTyping: '回覆中', sTypingD: '回答已經開始出現', sWaiting: '等你回應', sWaitingD: '有問題要問你，或需要批准',
+  sDone: '已完成', sDoneD: '這輪結束，附上最後的回覆', sStuck: '沒有進展', sStuckD: '太久沒動靜：工具卡住或提示遺失',
+  featEyebrow: '功能', featH: '會讓你一直開著的儀表板。',
+  f1: '即時辦公室', f1d: '手繪風 2D，或有即時光影的 3D 辦公室。工作中的 agent 坐在桌前；做完的去喝咖啡、睡午覺、打桌球。',
+  f2: '先處理需要你的', f2d: 'Session 依「需要你 → 工作中 → 已完成」分組，可開瀏覽器通知和提示音。',
+  f3: '批准提示', f3d: '可選的 Claude Code hook，讓權限提示顯示成「等你回應」而不是「執行中」。<code>--install-hook</code>',
+  f4: '今日總結', f4d: '今天的輪數、token 和最忙的專案，每張卡片也有 context 用量條。',
+  f5: '卡住偵測', f5d: '工具或思考太久沒動靜就標出來，不用白等一小時。',
+  f6: '子母畫面', f6d: '永遠置頂的小視窗，可放辦公室或列表，跟主分頁同步。',
+  f7: '隱私優先', f7d: '只讀不寫、只綁 127.0.0.1，資料不會離開你的電腦。<code>--private</code> 可在分享螢幕時隱藏 prompt。',
+  f8: '說你的語言', f8d: '支援九種語言，會依你寫 prompt 的語言自動選擇。',
+  listEyebrow: '列表模式', listH: '比較喜歡卡片？', listLead: '切到列表：依需要你的程度分組，附上即時計時器和 agent 最新的 prompt 與回覆。',
+  l1: '每個 session 都能一鍵複製接續指令', l2: '可依 agent 篩選，切換顯示子 agent 和閒置的 session', l3: '分頁標題會顯示工作中的數量，在別的分頁也看得到',
+  todayEyebrow: '0.4 新功能', todayH: '團隊今天做了多少？', todayLead: '今日面板會從午夜起，加總 Claude 和 Codex 的用量紀錄，依 agent 和專案統計輪數與 token。',
+  t1: 'Context 用量到 60% 變橘、85% 變紅，壓縮前就先提醒你', t2: '只從本機 log 統計，什麼都不會送出去',
+  scenesEyebrow: '場景', scenesH: '帶團隊去好玩的地方。', scenesLead: '辦公室是內建的。其他 3D 場景是 100–230 KB 的場景包，選了才下載，並用固定的 SHA-256 驗證。',
+  scGrave: '萬聖節墓園', newSmall: '新', scOffice: '辦公室', builtIn: '內建', scPirate: '海盜灣', scCafe: '咖啡廳', scStation: '太空站', scCastle: '城堡',
+  howEyebrow: '運作方式', howH: '不用 hook、不用設定、不用 key。', howLead: '你的 agent 本來就會把每則訊息和工具呼叫寫到硬碟，whatsmyagentdoing 只是跟著讀。',
+  h1t: '跟著讀 log', h1d: '<code>~/.claude</code>、<code>~/.codex</code>、<code>~/.gemini</code> 等目錄下的 session log 會被逐步讀取，從不寫入。',
+  h2t: '把事件變成狀態', h2d: '最新的事件會變成思考中、執行中、等你或已完成。很大的 log 只讀開頭和結尾。',
+  h3t: '串流到瀏覽器', h3d: '一個很小的本機伺服器透過 Server-Sent Events 把狀態推到頁面，整個架構就這樣。',
+  privacy: '<strong>資料不會離開你的電腦。</strong>伺服器只綁 127.0.0.1，不是送給 localhost 的請求一律拒絕。唯一的網路請求是可選的版本檢查，設定 <code>WMAD_NO_UPDATE_CHECK=1</code> 就能關掉。',
+  faqH: '常見問題',
+  q1: '會拖慢 agent 或改到什麼東西嗎？', a1: '不會。它只讀 log。可選的批准 hook 每次權限提示只會在 <code>~/.whatsmyagentdoing</code> 寫一個很小的標記檔，其他什麼都不動。',
+  q2: '為什麼 Claude Code 在等我批准時顯示「執行中」？', a2: 'Claude Code 不會把權限提示寫進 log。執行一次 <code>node bin/cli.js --install-hook</code> 加上可選的 Notification hook，就會顯示「等你回應」。<code>--uninstall-hook</code> 可以移除。',
+  q3: '要怎麼更新？', a3: '有新版時頁面會提醒你。按「更新」、執行 <code>/myoffice update</code>，或在 skill 資料夾裡 <code>git pull</code>。',
+  q4: '開著它可以分享螢幕嗎？', a4: '可以。用 <code>--private</code> 啟動就會隱藏 prompt、回覆和標題，只顯示狀態。',
+  q5: '我的 agent 不在清單上，可以支援嗎？', a5: '只要它會把 session log 寫到硬碟，大概都可以。開個 issue 附上 log 位置和去掉內容的簡短範例。',
+  finalH: '打開你的辦公室。', finalLead: '貼一行到 Claude Code 或 Codex，然後輸入 /myoffice。', ctaRepo: '到 GitHub 看看',
+  footL: 'MIT 授權 · 3D 模型來自 <a href="https://kenney.nl">Kenney</a>（CC0）· 各品牌標誌屬於其所有者。', issues: '回報問題',
+};
+
+// Live-looking ticker of made-up agents.
+const TICKS = [
+  ['claude', 'api-server', 'tool', 'Running', '執行中', 'Bash: npm test'],
+  ['codex', 'landing-page', 'thinking', 'Thinking', '思考中', 'reading src/hero.tsx'],
+  ['gemini', 'data-pipeline', 'waiting', 'Waiting for you', '等你回應', 'Allow Shell: pg_dump?'],
+  ['claude', 'mobile-app', 'typing', 'Writing reply', '回覆中', 'Fixed the crash on launch…'],
+  ['copilot', 'cli-tools', 'done', 'Done', '已完成', 'Added a --verbose flag'],
+  ['codex', 'billing', 'tool', 'Running', '執行中', 'Shell: pnpm test'],
+];
+const COLORS = { thinking: 'var(--thinking)', tool: 'var(--tool)', typing: 'var(--typing)', waiting: 'var(--waiting)', done: 'var(--done)' };
+const LOGO = { claude: 'claude.png', codex: 'codex.png', gemini: 'gemini.png', copilot: 'copilot.svg' };
+
+let lang = 'en';
+const en = {};
+document.querySelectorAll('[data-i]').forEach((el) => { en[el.dataset.i] = el.innerHTML; });
+
+function setLang(next) {
+  lang = next;
+  document.documentElement.lang = lang === 'zh' ? 'zh-Hant' : 'en';
+  document.querySelectorAll('[data-i]').forEach((el) => {
+    const v = (lang === 'zh' ? ZH : en)[el.dataset.i];
+    if (v != null) el.innerHTML = v;
+  });
+  document.getElementById('langBtn').textContent = lang === 'zh' ? 'English' : '中文';
+  showCmd(current);
+  renderTicker();
+  window.__carouselLang?.();
+  try { localStorage.setItem('wmad-site-lang', lang); } catch {}
+}
+
+let current = 'ask', tickAt = 0;
+function cmdText(k) { const c = CMDS[k]; return typeof c === 'string' ? c : c[lang]; }
+function cmdHtml(k) {
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  if (k === 'ask') return esc(cmdText(k));
+  return cmdText(k).split('\n').map((l) => `<span class="p">$ </span>${esc(l)}`).join('\n');
+}
+function showCmd(k) {
+  current = k;
+  for (const [id, key] of [['cmd', k], ['cmd2', 'ask']]) {
+    const box = document.getElementById(id);
+    box.innerHTML = cmdHtml(key) + `<button class="copy" type="button" data-key="${key}">${lang === 'zh' ? '複製' : 'Copy'}</button>`;
+  }
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+}
+document.getElementById('tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) showCmd(b.dataset.k); });
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('.copy');
+  if (!b) return;
+  try { await navigator.clipboard.writeText(cmdText(b.dataset.key)); } catch { return; }
+  b.textContent = lang === 'zh' ? '已複製' : 'Copied'; b.classList.add('ok');
+  setTimeout(() => { b.textContent = lang === 'zh' ? '複製' : 'Copy'; b.classList.remove('ok'); }, 1600);
+});
+
+function renderTicker() {
+  const rows = [0, 1, 2].map((i) => TICKS[(tickAt + i) % TICKS.length]);
+  document.getElementById('ticker').innerHTML = rows.map(([agent, who, st, enL, zhL, act]) =>
+    `<div class="tick"><img src="site/img/agents/${LOGO[agent]}" alt=""${agent === 'copilot' ? ' style="filter:invert(1)"' : ''}><span class="who">${who}</span>` +
+    `<span class="st" style="color:${COLORS[st]}"><i></i>${lang === 'zh' ? zhL : enL}</span><span class="act">${act}</span></div>`).join('');
+}
+if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => { tickAt = (tickAt + 1) % TICKS.length; renderTicker(); }, 2600);
+
+document.getElementById('langBtn').addEventListener('click', () => setLang(lang === 'zh' ? 'en' : 'zh'));
+let saved = null;
+try { saved = localStorage.getItem('wmad-site-lang'); } catch {}
+setLang(saved || (/^zh/i.test(navigator.language) ? 'zh' : 'en'));
+
+// Scene lightbox.
+const lb = document.getElementById('lb');
+function openLightbox(src, cap) {
+  const img = document.getElementById('lbImg'), vid = document.getElementById('lbVid'), isVideo = src.endsWith('.mp4');
+  img.hidden = isVideo; vid.hidden = !isVideo;
+  if (isVideo) { vid.src = src; vid.play().catch(() => {}); } else { img.src = src; vid.removeAttribute('src'); vid.load(); }
+  document.getElementById('lbCap').textContent = cap;
+  lb.classList.add('on');
+}
+document.getElementById('sceneGrid').addEventListener('click', (e) => {
+  const s = e.target.closest('.scene');
+  if (!s) return;
+  openLightbox(s.dataset.img, s.querySelector('.cap').textContent.replace(/\s+/g, ' ').trim());
+});
+function closeLightbox() { lb.classList.remove('on'); document.getElementById('lbVid').pause(); }
+lb.addEventListener('click', closeLightbox);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLightbox(); });
+
+// Motion is off for reduced-motion and data-saver users: they get the still posters.
+const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches || !!navigator.connection?.saveData;
+const playSafe = (v) => { const p = v.play(); if (p) p.catch(() => {}); };
+
+// Blurred office behind the hero.
+(() => {
+  const v = document.getElementById('heroBg');
+  // Phones get a portrait crop at native resolution instead of a wide clip zoomed 2×.
+  const phone = matchMedia('(max-width: 640px)').matches;
+  if (phone) v.poster = 'site/video/hero-bg-mobile.jpg';
+  if (STILL) return;
+  v.src = phone ? 'site/video/hero-bg-mobile.mp4' : 'site/video/hero-bg.mp4';
+  v.preload = 'auto';
+  playSafe(v);
+  document.addEventListener('visibilitychange', () => (document.hidden ? v.pause() : playSafe(v)));
+})();
+
+// Scene carousel: each looping clip plays once through (8 s), then cross-fades to the next.
+// Only the current clip and the next one are downloaded.
+(() => {
+  const show = document.getElementById('show'), stage = document.getElementById('stage');
+  const slides = [...stage.querySelectorAll('.slide')], dots = [...document.querySelectorAll('#dots .dot')];
+  const DUR = 8000;
+  let at = 0, timer = null, paused = false;
+  const name = (i) => dots[i].querySelector('span').textContent;
+  const load = (v) => { if (!v.src) { v.src = v.dataset.src; v.preload = 'auto'; } };
+  function go(i, user, keep) {
+    at = (i + slides.length) % slides.length;
+    slides.forEach((s, n) => {
+      s.classList.toggle('on', n === at);
+      if (n !== at && !s.paused) s.pause();
+    });
+    dots.forEach((d, n) => { d.classList.toggle('on', n === at); d.classList.remove('run'); d.setAttribute('aria-selected', n === at ? 'true' : 'false'); });
+    const v = slides[at];
+    v.setAttribute('aria-label', name(at));
+    document.getElementById('showUrl').textContent = `localhost:4545 — ${name(at)}`;
+    if (!STILL) {
+      load(v);
+      if (!keep) v.currentTime = 0;
+      playSafe(v);
+      load(slides[(at + 1) % slides.length]); // ready before it fades in
+    }
+    if (user) paused = false;
+    if (!keep) schedule();
+  }
+  function schedule() {
+    clearTimeout(timer);
+    if (STILL || paused) return;
+    void dots[at].offsetWidth; // restart the progress bar
+    dots[at].classList.add('run');
+    timer = setTimeout(() => go(at + 1), DUR);
+  }
+  function pause(on) {
+    paused = on; show.classList.toggle('paused', on);
+    if (on) clearTimeout(timer); else schedule();
+  }
+  show.style.setProperty('--dur', `${DUR}ms`);
+  document.getElementById('prevBtn').addEventListener('click', () => go(at - 1, true));
+  document.getElementById('nextBtn').addEventListener('click', () => go(at + 1, true));
+  dots.forEach((d) => d.addEventListener('click', () => go(+d.dataset.n, true)));
+  stage.addEventListener('mouseenter', () => pause(true));
+  stage.addEventListener('mouseleave', () => pause(false));
+  stage.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft') go(at - 1, true); if (e.key === 'ArrowRight') go(at + 1, true); });
+  let x0 = null, swiped = false;
+  stage.addEventListener('pointerdown', (e) => { swiped = false; if (e.pointerType !== 'mouse') x0 = e.clientX; });
+  stage.addEventListener('pointerup', (e) => {
+    if (x0 == null) return;
+    const dx = e.clientX - x0; x0 = null;
+    if (Math.abs(dx) > 40) { swiped = true; go(at + (dx < 0 ? 1 : -1), true); }
+  });
+  // A swipe also ends in a click; only a tap opens it full size.
+  stage.addEventListener('click', (e) => {
+    if (swiped || e.target !== slides[at]) return;
+    openLightbox(STILL ? slides[at].poster : slides[at].dataset.src, name(at));
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(timer); slides[at].pause(); } else if (!STILL) { playSafe(slides[at]); schedule(); }
+  });
+  window.__carouselLang = () => go(at, false, true);
+  go(0);
+})();
+
+// Nav border and reveal-on-scroll.
+const nav = document.getElementById('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), { passive: true });
+const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => es.forEach((x) => { if (x.isIntersecting) { x.target.classList.add('in'); io.unobserve(x.target); } }), { rootMargin: '0px 0px -8% 0px' }) : null;
+document.querySelectorAll('.reveal').forEach((el) => (io ? io.observe(el) : el.classList.add('in')));
+</script>
+</body>
+</html>
