@@ -564,6 +564,7 @@
 <script src="/i18n.js"></script>
 <script src="/office.js"></script>
 <script src="/popout.js"></script>
+<script src="/notification-rules.js"></script>
 
 <script>
 // Language: your pick in the 🌐 menu, else the language of your prompts
@@ -1144,29 +1145,21 @@ function onData(data) {
   state.flash.clear();
   for (const s of data.sessions) {
     const before = state.prev.get(s.key);
-    const pendingIds = (s.pendingRequests || []).map((r) => r.id);
-    const newlyNeeds = needsInput(s) && (!before?.needsInput || pendingIds.some((id) => !before.pendingIds.includes(id)));
-    const newlyDone = s.status === 'done' && before && before.status !== 'done';
-    const newlyError = s.status === 'error' && before && before.status !== 'error';
-    if (!first && before && (newlyDone || newlyNeeds || newlyError)) {
-      state.flash.add(s.key);
-      const paused = Number.isFinite(state.notifyPausedUntil) && state.notifyPausedUntil > Date.now();
-      const category = paused ? null
-        : newlyError && state.notifyErrors ? 'error'
-          : newlyNeeds && state.notifyNeeds ? 'needs'
-            : newlyDone && state.notifyDone ? 'done' : null;
-      if (!PIP && !s.subagent && category && state.notify && window.Notification && Notification.permission === 'granted') {
-        const project = s.project || s.agent;
-        const pendingSummary = (s.pendingRequests || []).map((r) => r.summary).filter(Boolean).join('\n');
-        const title = category === 'error' ? L.errorNote(project) : category === 'needs' ? `${project}: ${L.waiting}` : L.doneNote(project);
-        const body = category === 'error'
-          ? [s.error || s.activity || '', newlyNeeds ? pendingSummary : ''].filter(Boolean).join('\n')
-          : category === 'needs' ? pendingSummary : s.reply || '';
-        try { new Notification(title, { body, tag: s.key }); } catch {}
-      }
-      if (!PIP && !s.subagent && category && state.sound) chime(category === 'done' ? 'done' : 'attention');
+    const decision = WMADNotificationRules.decideNotification(s, before, first, {
+      notify: state.notify,
+      notifyNeeds: state.notifyNeeds,
+      notifyErrors: state.notifyErrors,
+      notifyDone: state.notifyDone,
+      notifyPausedUntil: state.notifyPausedUntil,
+      sound: state.sound,
+      pip: PIP,
+    }, Date.now(), needsInput, { waiting: L.waiting, errorNote: L.errorNote, doneNote: L.doneNote });
+    if (decision.flash) state.flash.add(s.key);
+    if (decision.message && window.Notification && Notification.permission === 'granted') {
+      try { new Notification(decision.message.title, { body: decision.message.body, tag: decision.message.tag }); } catch {}
     }
-    state.prev.set(s.key, { status: s.status, needsInput: needsInput(s), pendingIds });
+    if (decision.chime) chime(decision.chime);
+    state.prev.set(s.key, decision.nextPrevious);
   }
   state.data = data;
   state.loaded = true;

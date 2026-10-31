@@ -135,7 +135,9 @@ async function drawnLogos(target) {
    window.Notification=class {static permission='granted';constructor(title,options){window.__notifications.push({title,options})}};
   },sessions);
   context.on('page',p=>p.on('pageerror',e=>errors.push(String(e))));
-  const page=await context.newPage();await page.goto(base);await stable(page);
+  const page=await context.newPage();await page.goto(base);
+  assert.equal(await page.evaluate(()=>typeof WMADNotificationRules),'object','the served dashboard loads its notification rules module');
+  await stable(page);
   await page.waitForFunction(()=>state.connection==='connected'&&state.lastUpdateAt!==null);
   assert.equal(await page.locator('#conn').isVisible(),true);
   assert.match(await page.locator('#conn').innerText(),/Connected/);
