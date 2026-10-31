@@ -199,6 +199,40 @@ async function drawnLogos(target) {
   return [...found].sort();
  });
 }
+async function settleOfficeRoster(target, expectedKeys, context, sessions) {
+ const maxSteps=2000;
+ const result=await target.evaluate(({keys,incoming,limit})=>{
+  const expected=new Set(keys);
+  const roster=()=>[...office.people.entries()].map(([key,p])=>({
+   key,mode:p.mode,leaving:!!p.leaving,pathLength:p.path.length,
+   path:p.path.slice(0,4).map(({x,y})=>({x,y})),
+  }));
+  const exact=()=>office.people.size===expected.size&&keys.every(key=>office.people.has(key));
+  const framesBefore=office.framesShown;
+  if(incoming)onData({now:Date.now(),sessions:incoming});
+  const framesAfterUpdate=office.framesShown;
+  const initial=roster();
+  const initialExtras=initial.filter(person=>!expected.has(person.key));
+  const initialMissing=keys.filter(key=>!office.people.has(key));
+  let steps=0;
+  while(!exact()&&steps<limit){office.step(0.05);steps++;}
+  const remaining=roster();
+  return {
+   actual:[...office.people.keys()],steps,limit,framesBefore,framesAfterUpdate,framesAfterSteps:office.framesShown,
+   initialExtras,initialMissing,remainingExtras:remaining.filter(person=>!expected.has(person.key)),
+   remainingMissing:keys.filter(key=>!office.people.has(key)),
+  };
+ },{keys:expectedKeys,incoming:sessions||null,limit:maxSteps});
+ const diagnostic=JSON.stringify(result);
+ assert.equal(result.framesAfterUpdate,result.framesBefore,`${context}: a snapshot must not advance a render frame synchronously; ${diagnostic}`);
+ if(sessions){
+  assert.ok(result.initialExtras.length>0,`${context}: the new snapshot should leave the old roster pending before simulation steps; ${diagnostic}`);
+  assert.ok(result.initialExtras.every(person=>person.leaving),`${context}: extra people should be marked as leaving; ${diagnostic}`);
+ }
+ assert.equal(result.framesAfterSteps,result.framesAfterUpdate,`${context}: fixed simulation steps must not depend on render frames; ${diagnostic}`);
+ assert.deepEqual(result.actual.sort(),expectedKeys.slice().sort(),`${context}: renderer roster did not settle within ${maxSteps} fixed steps; ${diagnostic}`);
+ return result;
+}
 (async()=>{
  const watcher = new DemoWatcher().start();
  const server = createServer(watcher, { demo: true, privacy: false });
@@ -801,8 +835,7 @@ async function drawnLogos(target) {
   for (const quality of ['mid','high']) {
    await page.click(`#qualSeg [data-v=${quality}]`);
    await page.waitForFunction(q=>officeKind.startsWith(q)&&office.framesShown>4&&(q!=='high'||office.loaded),quality);
-   // Reused renderers animate the previous fixture's people walking out.
-   await page.waitForFunction(keys=>office.people.size===keys.length&&keys.every(k=>office.people.has(k)),nativeClients.map(s=>s.key));
+   await settleOfficeRoster(page,nativeClients.map(s=>s.key),`Kimi, DSH and Grok in ${quality}`);
    assert.deepEqual([...new Set(await badges(page))].sort(),['Ds','Gr','Ki']);
    assert.deepEqual(await drawnLogos(page),['dsh','grok','kimi']);
    assert.equal(await page.evaluate(()=>office.people.has('kimi:one/agent-1')),true);
@@ -821,13 +854,12 @@ async function drawnLogos(target) {
    {key:'antigravity:conv-1',id:'conv-1',agent:'antigravity',status:'tool',activity:'Bash: npm test',cwd:'/demo/agy'},
    {key:'antigravity:conv-2',id:'conv-2',parentId:'conv-1',subagent:true,agent:'antigravity',status:'thinking',cwd:'/demo/agy'},
   ].map(s=>({...s,lastEventAt:Date.now()}));
-  await page.evaluate(s=>onData({now:Date.now(),sessions:s}),antigravity);
+  await settleOfficeRoster(page,antigravity.map(s=>s.key),'Antigravity',antigravity);
   await page.waitForFunction(()=>{
    const img=document.querySelector('#agentLegend img[src="/assets/agents/antigravity.png"]');
    return img?.complete&&img.naturalWidth>0;
   });
   assert.match(await resumeOf(page,'antigravity:conv-1'),/agy --conversation 'conv-1'/);
-  await page.waitForFunction(keys=>office.people.size===keys.length&&keys.every(k=>office.people.has(k)),antigravity.map(s=>s.key));
   assert.deepEqual(await drawnLogos(page),['antigravity']);
   await page.evaluate(s=>onData({now:Date.now(),sessions:s}),nativeClients);
   check('Antigravity CLI sessions show their logo, subagents and agy --conversation resume command');
