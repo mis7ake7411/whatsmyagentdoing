@@ -305,13 +305,30 @@
   .dactions .copy { font-size: 12px; }
   .side .ctx { margin: 0 6px 10px; }
   .msgs { display: flex; flex-direction: column; gap: 8px; margin: 6px 4px 0; }
-  .msg { max-width: 92%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg { min-width: 0; max-width: 92%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg-content { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .msg-content.source { white-space: pre-wrap; }
+  .msg-content > :first-child { margin-top: 0; }
+  .msg-content > :last-child { margin-bottom: 0; }
+  .msg-content p { margin: .4em 0; }
+  .msg-content h1, .msg-content h2, .msg-content h3, .msg-content h4, .msg-content h5, .msg-content h6 { margin: .55em 0 .3em; font-size: 1.08em; line-height: 1.35; letter-spacing: normal; }
+  .msg-content ul, .msg-content ol { margin: .4em 0; padding-left: 1.4em; }
+  .msg-content li + li { margin-top: .12em; }
+  .msg-content blockquote { margin: .45em 0; padding-left: .7em; border-left: 2px solid var(--faint); color: var(--muted); }
+  .msg-content code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+  .msg-content pre { max-width: 100%; margin: .5em 0; padding: 8px; overflow-x: auto; border-radius: 7px; background: color-mix(in srgb, var(--ink) 5%, var(--panel)); white-space: pre; }
+  .msg-content pre code { white-space: inherit; }
+  .msg-content a { color: var(--tool); text-decoration: underline; text-underline-offset: 2px; }
+  .msg-content.source a { color: inherit; text-decoration: none; }
   .msg.user { align-self: flex-end; background: color-mix(in srgb, var(--tool) 16%, var(--panel)); }
   .msg.assistant { align-self: flex-start; background: color-mix(in srgb, var(--ink) 6%, var(--panel)); border: 1px solid var(--line); }
   .msg.tool { align-self: flex-start; display: flex; align-items: center; gap: 6px; padding: 3px 4px; color: var(--muted); font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .msg.tool .msg-content { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: inherit; }
   .msg .at { display: block; margin-top: 3px; font-size: 10.5px; color: var(--faint); }
   .msgs-note { margin: 12px 6px; font-size: 12.5px; color: var(--muted); }
   .side-sec { margin: 14px 6px 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .side-sec.recent-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .message-view-toggle { flex: none; min-height: 28px; padding: 3px 8px; font-size: 11px; font-weight: 500; text-transform: none; letter-spacing: normal; }
   /* The panel's group headings already count Needs you / Working / Finished, so the
      toolbar drops those chips (and then the title) before it would wrap. */
   @media (max-width: 1240px) { body.full .summary { display: none; } }
@@ -565,6 +582,7 @@
 <script src="/office.js"></script>
 <script src="/popout.js"></script>
 <script src="/notification-rules.js"></script>
+<script src="/message-format.js"></script>
 
 <script>
 // Language: your pick in the 🌐 menu, else the language of your prompts
@@ -949,8 +967,10 @@ function card(s, now) {
   const title = s.title && s.title !== project ? `<div class="title" title="${esc(s.title)}">${esc(s.title)}</div>` : '';
   const act = s.activity ? `<span class="act" title="${esc(s.activity)}">${esc(s.activity)}</span>` : '';
   const showText = !s.subagent || ACTIVE.has(s.status);
-  const q = showText && s.prompt ? `<div class="q" title="${esc(s.prompt)}">${esc(s.prompt)}</div>` : '';
-  const r = showText && s.reply && !ACTIVE.has(s.status) ? `<div class="r" title="${esc(s.reply)}">${esc(s.reply)}</div>` : '';
+  const promptSummary = showText && s.prompt ? MessageFormat.plainText(s.prompt) : '';
+  const replySummary = showText && s.reply && !ACTIVE.has(s.status) ? MessageFormat.plainText(s.reply) : '';
+  const q = promptSummary ? `<div class="q" title="${esc(s.prompt)}">${esc(promptSummary)}</div>` : '';
+  const r = replySummary ? `<div class="r" title="${esc(s.reply)}">${esc(replySummary)}</div>` : '';
   const err = s.error ? `<div class="err">${esc(s.error)}</div>` : '';
   const sub = s.subagent ? ` · ${L.sub}` : '';
   const ctx = contextBar(s.context);
@@ -1601,6 +1621,7 @@ connect();
 const sideEl = document.getElementById('side');
 let sel = null;              // key of the agent open in the panel
 let convo = { key: null, at: null, messages: null, private: false, busy: false };
+let messageSourceView = { key: null, raw: false };
 
 function statusColor(st) {
   return { thinking: 'var(--thinking)', tool: 'var(--tool)', typing: 'var(--typing)', waiting: 'var(--waiting)', error: 'var(--error)', done: 'var(--done)' }[st] || 'var(--faint)';
@@ -1698,8 +1719,9 @@ function renderSide() {
     if (!items.length) return '';
     return `<div class="side-group">${esc(L[g.key])} · ${items.length}</div>` + items.map((s, i) => {
       const requests = s.pendingRequests || [];
-      const requestInfo = requests.length ? `${L.pendingCount(requests.length)}${requests.some((r) => r.summary) ? `: ${requests.map((r) => r.summary).filter(Boolean).join(' · ')}` : ''}` : '';
-      const act = [requestInfo, s.error, s.activity, s.status === 'done' && s.reply, s.title].filter(Boolean).join(' · ');
+      const requestSummaries = requests.map((r) => MessageFormat.plainText(r.summary || '')).filter(Boolean);
+      const requestInfo = requests.length ? `${L.pendingCount(requests.length)}${requestSummaries.length ? `: ${requestSummaries.join(' · ')}` : ''}` : '';
+      const act = [requestInfo, s.error, s.activity, s.status === 'done' && MessageFormat.plainText(s.reply || ''), MessageFormat.plainText(s.title || '')].filter(Boolean).join(' · ');
       const age = freshness(s, now);
       const ageInfo = age.quiet === null ? L.logTimeUnknown : L.lastLog(dur(age.quiet));
       const staleInfo = age.stale ? L.staleMeaning : '';
@@ -1726,7 +1748,10 @@ function openDetail(key) {
   if (!state.side) setSide(true);
   document.getElementById('sideList').inert = true;
   document.getElementById('sideDetail').inert = false;
-  if (convo.key !== key) convo = { key, at: null, messages: null, private: false, busy: false };
+  if (convo.key !== key) {
+    convo = { key, at: null, messages: null, private: false, busy: false };
+    messageSourceView = { key, raw: false };
+  }
   // Build the details off-screen this frame and start the slide on the next,
   // so the click doesn't also pay for layout in the slide's first frame.
   renderDetail(true);
@@ -1743,7 +1768,7 @@ function closeDetail() {
   document.getElementById('sideDetail').inert = true;
 }
 
-function renderDetail(scrollDown) {
+function renderDetail(scrollDown, options = {}) {
   const s = state.data.sessions.find((x) => x.key === sel);
   if (!s) { closeDetail(); return; }
   const now = Date.now() - state.skew;
@@ -1752,12 +1777,19 @@ function renderDetail(scrollDown) {
   if (convo.at !== s.lastEventAt && !convo.busy) loadConvo(s);
   const body = document.getElementById('detailBody');
   const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 60;
+  const showSource = messageSourceView.key === sel && messageSourceView.raw;
   const msgs = convo.private ? `<div class="msgs-note">${esc(L.privateNote)}</div>`
     : convo.messages == null ? `<div class="msgs-note">${esc(L.loadingMsgs)}</div>`
       : !convo.messages.length ? `<div class="msgs-note">${esc(L.noMessages)}</div>`
-        : `<div class="msgs">${convo.messages.map((m) => m.role === 'tool'
-          ? `<div class="msg tool" title="${esc(m.text)}">${GEAR}${esc(m.text)}</div>`
-          : `<div class="msg ${m.role}">${esc(m.text)}<span class="at">${esc(hhmm(m.at))}</span></div>`).join('')}</div>`;
+        : `<div class="msgs">${convo.messages.map((m) => {
+          if (m.role === 'tool') return `<div class="msg tool" title="${esc(m.text)}">${GEAR}<span class="msg-content">${esc(m.text)}</span></div>`;
+          const isConversationMessage = m.role === 'user' || m.role === 'assistant';
+          const content = isConversationMessage && !showSource ? MessageFormat.renderMarkdown(m.text) : esc(m.text);
+          return `<div class="msg ${esc(m.role)}"><div class="msg-content${showSource ? ' source' : ''}">${content}</div><span class="at">${esc(hhmm(m.at))}</span></div>`;
+        }).join('')}</div>`;
+  const messageToggle = convo.messages && convo.messages.length
+    ? `<button class="btn message-view-toggle" id="messageViewToggle" type="button" data-message-view-toggle aria-pressed="${showSource ? 'true' : 'false'}">${esc(showSource ? L.messageShowFormatted : L.messageShowSource)}</button>`
+    : '';
   const resume = resumeCmd(s);
   const html = `
     ${s.title && s.title !== s.project ? `<div class="dtitle">${esc(s.title)}</div>` : ''}
@@ -1774,13 +1806,17 @@ function renderDetail(scrollDown) {
     </dl>
     ${contextBar(s.context)}
     ${resume ? `<div class="dactions"><button class="copy" data-copy="${esc(resume)}">${L.copy}</button></div>` : ''}
-    <div class="side-sec">${esc(L.recent)}</div>
+    <div class="side-sec recent-head"><span>${esc(L.recent)}</span>${messageToggle}</div>
     ${msgs}`;
   // The turn timer ticks on its own (tickTimes), so the panel only redraws when something changed.
   if (body.dataset.html !== html) {
+    const restoreToggleFocus = options.restoreFocus || document.activeElement?.id === 'messageViewToggle';
     body.innerHTML = html; body.dataset.html = html;
     const t = body.querySelector('[data-time]'); if (t) t.textContent = timeLabel(s, now);
-    if (scrollDown || nearBottom) body.scrollTop = body.scrollHeight;
+    if (options.modeToggle) {
+      body.scrollTop = options.scrollTop;
+    } else if (scrollDown || nearBottom) body.scrollTop = body.scrollHeight;
+    if (restoreToggleFocus) body.querySelector('#messageViewToggle')?.focus({ preventScroll: true });
   }
 }
 const GEAR = '<svg class="ui-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg>';
@@ -1806,6 +1842,15 @@ document.getElementById('sideBack').addEventListener('click', closeDetail);
 document.getElementById('sideRows').addEventListener('mouseleave', (e) => { if (e.currentTarget.dataset.stale) renderSide(); });
 document.getElementById('sideRows').addEventListener('click', (e) => {
   const b = e.target.closest('.srow'); if (b) openDetail(b.dataset.key);
+});
+document.getElementById('detailBody').addEventListener('click', (e) => {
+  const button = e.target.closest('[data-message-view-toggle]');
+  if (!button || !sel) return;
+  const body = e.currentTarget;
+  const restoreFocus = document.activeElement === button;
+  const scrollTop = body.scrollTop;
+  messageSourceView = { key: sel, raw: !(messageSourceView.key === sel && messageSourceView.raw) };
+  renderDetail(false, { modeToggle: true, restoreFocus, scrollTop });
 });
 document.addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, select, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;

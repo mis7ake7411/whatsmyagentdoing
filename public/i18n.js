@@ -19,7 +19,7 @@
       langName: 'English', html: 'en',
       title: "What's my agent doing", office: 'Office', list: 'List', wentHome: 'went home', qMid: '2D', qHigh: '3D',
       loading3d: 'Loading 3D office…', loading2d: 'Setting up the office…', failed3d: "Couldn't load the 3D office — showing Medium instead.",
-      all: 'All', subagents: 'Subagents', showIdle: 'Idle', notify: "Desktop notifications", notifyBlocked: "Notifications are blocked for this page. Allow them in the site settings next to the address bar.", notifyOn: 'Notifications on', sound: 'Sound', stuck: (m) => `No progress for ${m} min`, today: "Today", turnsL: "turns", tokensL: "tokens", agentsL: "agents", context: "Context", topProjects: "Busiest projects", summaryNote: "Counted from local logs since midnight. Very large logs are only partly read.", noUsage: "Nothing recorded yet today.", agentsTitle: "Agents", recent: "Recent conversation", noMessages: "No messages in the recent log.", back: "Back", hidePanel: "Hide panel", showPanel: "Show agents", modelL: "Model", folderL: "Folder", privateNote: "Started with --private: conversations are hidden.", loadingMsgs: "Loading…", disconnected: 'Disconnected — retrying…',
+      all: 'All', subagents: 'Subagents', showIdle: 'Idle', notify: "Desktop notifications", notifyBlocked: "Notifications are blocked for this page. Allow them in the site settings next to the address bar.", notifyOn: 'Notifications on', sound: 'Sound', stuck: (m) => `No progress for ${m} min`, today: "Today", turnsL: "turns", tokensL: "tokens", agentsL: "agents", context: "Context", topProjects: "Busiest projects", summaryNote: "Counted from local logs since midnight. Very large logs are only partly read.", noUsage: "Nothing recorded yet today.", agentsTitle: "Agents", recent: "Recent conversation", noMessages: "No messages in the recent log.", back: "Back", hidePanel: "Hide panel", showPanel: "Show agents", modelL: "Model", folderL: "Folder", privateNote: "Started with --private: conversations are hidden.", loadingMsgs: "Loading…", messageShowSource: 'Show source', messageShowFormatted: 'Show formatted', disconnected: 'Disconnected — retrying…',
       notifyCategories: 'Notify me about', notifyNeeds: 'Input requests', notifyErrors: 'Errors', notifyDone: 'Completed turns',
       notifyPause: 'Pause notifications', notifyPauseChoose: 'Choose a duration', notifyPause15: '15 minutes', notifyPause30: '30 minutes', notifyPause60: '60 minutes',
       notifyResume: 'Resume notifications', notifyPauseStatus: (time, minutes) => `Paused until ${time} (${minutes} min remaining)`,
@@ -53,7 +53,7 @@
       langName: '繁體中文', html: 'zh-Hant',
       title: '我的 Agent 在幹嘛', office: '辦公室', list: '列表', wentHome: '已下班', qMid: '2D', qHigh: '3D',
       loading3d: '正在載入 3D 辦公室…', loading2d: '正在佈置辦公室…', failed3d: '3D 辦公室載入失敗，先用中畫質顯示。',
-      all: '全部', subagents: '子 agent', showIdle: '閒置', notify: "桌面通知", notifyBlocked: "瀏覽器封鎖了這個頁面的通知，請在網址列旁的網站設定裡允許。", notifyOn: '通知已開', sound: '提示音', stuck: (m) => `${m} 分鐘沒有進展`, today: "今日", turnsL: "輪", tokensL: "tokens", agentsL: "個 agent", context: "Context", topProjects: "最忙的專案", summaryNote: "從午夜起的本機 log 統計；非常大的 log 只會讀一部分。", noUsage: "今天還沒有紀錄。", agentsTitle: "Agent 列表", recent: "最近對話", noMessages: "最近的 log 裡沒有訊息。", back: "返回", hidePanel: "收起側欄", showPanel: "顯示 Agent", modelL: "模型", folderL: "資料夾", privateNote: "以 --private 啟動：對話內容已隱藏。", loadingMsgs: "載入中…", disconnected: '連線中斷，重試中…',
+      all: '全部', subagents: '子 agent', showIdle: '閒置', notify: "桌面通知", notifyBlocked: "瀏覽器封鎖了這個頁面的通知，請在網址列旁的網站設定裡允許。", notifyOn: '通知已開', sound: '提示音', stuck: (m) => `${m} 分鐘沒有進展`, today: "今日", turnsL: "輪", tokensL: "tokens", agentsL: "個 agent", context: "Context", topProjects: "最忙的專案", summaryNote: "從午夜起的本機 log 統計；非常大的 log 只會讀一部分。", noUsage: "今天還沒有紀錄。", agentsTitle: "Agent 列表", recent: "最近對話", noMessages: "最近的 log 裡沒有訊息。", back: "返回", hidePanel: "收起側欄", showPanel: "顯示 Agent", modelL: "模型", folderL: "資料夾", privateNote: "以 --private 啟動：對話內容已隱藏。", loadingMsgs: "載入中…", messageShowSource: '顯示原文', messageShowFormatted: '顯示閱讀版', disconnected: '連線中斷，重試中…',
       notifyCategories: '通知類別', notifyNeeds: '需要回應', notifyErrors: '錯誤', notifyDone: '回合完成',
       notifyPause: '暫停通知', notifyPauseChoose: '選擇暫停時間', notifyPause15: '15 分鐘', notifyPause30: '30 分鐘', notifyPause60: '60 分鐘',
       notifyResume: '恢復通知', notifyPauseStatus: (time, minutes) => `通知暫停至 ${time}（剩餘 ${minutes} 分鐘）`,
@@ -340,6 +340,7 @@
     'notifyPause15', 'notifyPause30', 'notifyPause60', 'notifyResume', 'notifyPauseStatus', 'pipSummaryToggle',
     'pipSummaryTitle', 'pipExpand', 'pipCollapse', 'pipProjectScope', 'pipProjectsLabel', 'pipProjectsHint', 'pipNoProjects',
     'pipNoMatches', 'pipClearProjects', 'pipUnavailable', 'pipUnavailableSession', 'pipSummaryEmpty', 'pipProjectLimit',
+    'messageShowSource', 'messageShowFormatted',
   ];
   for (const [locale, strings] of Object.entries(S)) {
     if (locale === 'en' || locale === 'zh-TW') continue;

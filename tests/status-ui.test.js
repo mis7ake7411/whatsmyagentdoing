@@ -58,6 +58,7 @@ function page(search = '') {
   });
   context.window = context;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/notification-rules.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/message-format.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/office.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../public/i18n.js'), 'utf8'), context);
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');

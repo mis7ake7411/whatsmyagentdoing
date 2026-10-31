@@ -33,6 +33,7 @@ async function screenshotElement(page, locator, name) {
  await locator.screenshot({ path: path.join(screenshots, name + '.png') });
 }
 const clientsOnly = process.env.WMAD_UI_CLIENTS_ONLY === '1';
+const messageFormatOnly = process.env.WMAD_UI_MESSAGE_FORMAT_ONLY === '1';
 const checks=[];
 const check=(name)=>{checks.push(name);console.log('PASS',name)};
 const sessions = [
@@ -139,6 +140,8 @@ async function drawnLogos(target) {
   assert.equal(await page.evaluate(()=>typeof WMADNotificationRules),'object','the served dashboard loads its notification rules module');
   await stable(page);
   await page.waitForFunction(()=>state.connection==='connected'&&state.lastUpdateAt!==null);
+  if (messageFormatOnly) await page.evaluate(()=>{store.set('lang','zh-TW');state.lang='zh-TW';applyLang('zh-TW');render()});
+  if (!messageFormatOnly) {
   assert.equal(await page.locator('#conn').isVisible(),true);
   assert.match(await page.locator('#conn').innerText(),/Connected/);
   let mainUpdate=await page.evaluate(()=>state.lastUpdateAt);
@@ -771,6 +774,133 @@ async function drawnLogos(target) {
   }
   check('settings close with Escape/outside click, restore focus, and fit narrow and wide screens in both themes');
   }
+  }
+  const formatKey='codex:message-format', otherFormatKey='codex:message-format-other';
+  const formatPrompt='## Ask\n- Keep foo_bar';
+  const formatReply='**Finished** [details](javascript:alert(1))';
+  const longCodeLine=`const value = "${'x'.repeat(260)}";`;
+  const formatSource=[
+   '# Message preview','', '## Safe formatting','', '- first item','- second item','', '> quoted safely','',
+   '```js',longCodeLine,'```','',
+   'Use `x < y` and [documentation](https://example.com/docs?a=1&b=2).','',
+   '<script>window.__formatPayload = true</script>',
+   '<img src="https://example.invalid/pixel.png" onerror="window.__formatPayload = true">',
+   '![remote image](https://example.invalid/markdown-image.png)',
+   ...Array.from({length:12},(_,index)=>`source line ${index+1}: ${'path_name '.repeat(4)}`),
+  ].join('\n');
+  assert.ok(formatSource.length<=1500,'the fixture stays within the transcript snippet limit');
+  const formatSession={key:formatKey,id:'message-format',agent:'codex',project:'format-project',cwd:'/demo/format-project',
+   title:'### Original title',prompt:formatPrompt,reply:formatReply,status:'done',activity:'Read: **important_file.js**',
+   error:'ERROR: **raw error**',pendingRequests:[{summary:'**Grant access** to [file](javascript:alert(1))'}],
+   lastEventAt:Date.now()-60_000,turnStartedAt:Date.now()-120_000};
+  const otherFormatSession={...formatSession,key:otherFormatKey,id:'message-format-other',project:'other-format-project',
+   cwd:'/demo/other-format-project',title:null,prompt:null,reply:null,error:null,pendingRequests:[],
+   activity:'Read: other_file.js',lastEventAt:Date.now()};
+  let formatMessages=[
+   {role:'user',text:formatSource,at:Date.now()-30_000},
+   {role:'assistant',text:'**Assistant reply**\n\nUse _carefully_.',at:Date.now()-20_000},
+   {role:'tool',text:'**plain tool**',at:Date.now()-10_000},
+  ];
+  const updatedFormatText='## Transcript updated\n\n- the source view stays on';
+  let formatTranscriptFetches=0;
+  const externalImageRequests=[];
+  await page.route('**/api/transcript*',async route=>{
+   const key=new URL(route.request().url()).searchParams.get('key');
+   if(key===formatKey){
+    formatTranscriptFetches++;
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({messages:formatMessages,private:false})});
+   } else if(key===otherFormatKey){
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({messages:[{role:'user',text:'[source](javascript:alert(1))',at:Date.now()}],private:false})});
+   } else await route.continue();
+  });
+  await page.route('https://example.invalid/**',async route=>{externalImageRequests.push(route.request().url());await route.abort()});
+  await page.evaluate(()=>{store.set('lang','en');state.lang='en';applyLang('en');render()});
+  await page.waitForFunction(()=>langCode==='en',null,{timeout:10000});
+  await page.evaluate(s=>onData({now:Date.now(),sessions:[...state.data.sessions,s]}),formatSession);
+  await page.waitForFunction(()=>langCode==='en',null,{timeout:10000});
+  await page.waitForFunction(key=>document.querySelector(`#side .srow[data-key="${key}"]`),formatKey,{timeout:10000});
+  const cardSummary=await page.evaluate(s=>{
+   const host=document.createElement('div');host.innerHTML=card(s,Date.now());
+   return {prompt:host.querySelector('.q')?.textContent,promptTitle:host.querySelector('.q')?.title,
+    reply:host.querySelector('.r')?.textContent,replyTitle:host.querySelector('.r')?.title,title:host.querySelector('.title')?.textContent};
+  },formatSession);
+  assert.equal(cardSummary.prompt,'Ask Keep foo_bar');
+  assert.equal(cardSummary.promptTitle,formatPrompt);
+  assert.equal(cardSummary.reply,'Finished details');
+  assert.equal(cardSummary.replyTitle,formatReply);
+  assert.equal(cardSummary.title,formatSession.title,'the original card title stays intact');
+  const rowActivity=await page.locator(`#side .srow[data-key="${formatKey}"] .st > span:not(.freshness)`).innerText();
+  assert.match(rowActivity,/Grant access to file/);
+  assert.match(rowActivity,/ERROR: \*\*raw error\*\*/,'error output remains unchanged');
+  assert.match(rowActivity,/Read: \*\*important_file\.js\*\*/,'tool activity remains unchanged');
+  assert.match(rowActivity,/Original title/);
+  assert.match(rowActivity,/Finished details/);
+  await openAgent(page,formatKey);
+  await page.waitForFunction(()=>document.querySelector('#detailBody .msg.user pre')&&document.querySelector('#messageViewToggle')?.getAttribute('aria-pressed')==='false',null,{timeout:10000});
+  await waitForFiniteAnimations(page);
+  assert.equal(await page.evaluate(()=>typeof MessageFormat),'object','the served dashboard loads the message renderer');
+  assert.equal(await page.locator('#detailBody .msg.user h1').innerText(),'Message preview');
+  assert.equal(await page.locator('#detailBody .msg.user h2').innerText(),'Safe formatting');
+  assert.equal(await page.locator('#detailBody .msg.user li').count(),2);
+  assert.equal(await page.locator('#detailBody .msg.user blockquote').innerText(),'quoted safely');
+  assert.equal(await page.locator('#detailBody .msg.user a').getAttribute('href'),'https://example.com/docs?a=1&b=2');
+  assert.equal(await page.locator('#detailBody .msg.user img, #detailBody .msg.user script').count(),0);
+  assert.equal(await page.evaluate(()=>window.__formatPayload),undefined);
+  assert.deepEqual(externalImageRequests,[],'Markdown images and raw image tags make no network request');
+  assert.equal(await page.locator('#detailBody .msg.tool .msg-content').textContent(),'**plain tool**','tool messages stay plain');
+  const codeBox=await page.locator('#detailBody .msg.user pre').evaluate(el=>({width:el.clientWidth,scrollWidth:el.scrollWidth}));
+  assert.ok(codeBox.scrollWidth>codeBox.width,'long fenced code scrolls inside the message bubble');
+  await page.setViewportSize({width:320,height:640});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'formatted messages do not overflow a 320px page');
+  const sourceToggle=page.locator('#messageViewToggle');
+  assert.equal(await sourceToggle.innerText(),'Show source');
+  await page.locator('#detailBody').evaluate(el=>{el.scrollTop=0});
+  await sourceToggle.evaluate(el=>el.focus({preventScroll:true}));
+  const beforeToggleScroll=await page.locator('#detailBody').evaluate(el=>el.scrollTop);
+  await page.keyboard.press('Space');
+  await page.waitForFunction(()=>document.querySelector('#messageViewToggle')?.getAttribute('aria-pressed')==='true',null,{timeout:10000});
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'messageViewToggle','keyboard focus stays on the replacement toggle');
+  assert.equal(await page.locator('#detailBody').evaluate(el=>el.scrollTop),beforeToggleScroll,'switching views does not jump to the conversation bottom');
+  assert.equal(await page.locator('#detailBody .msg.user .msg-content').textContent(),formatSource,'source mode shows the exact received text');
+  assert.equal(await sourceToggle.innerText(),'Show formatted');
+  formatMessages=[...formatMessages,{role:'assistant',text:updatedFormatText,at:Date.now()}];
+  await page.evaluate(key=>onData({now:Date.now(),sessions:state.data.sessions.map(s=>s.key===key?{...s,lastEventAt:Date.now()}:s)}),formatKey);
+  await page.waitForFunction(expected=>{
+   const messages=[...document.querySelectorAll('#detailBody .msg.assistant .msg-content')];
+   return messages.at(-1)?.textContent===expected&&document.querySelector('#messageViewToggle')?.getAttribute('aria-pressed')==='true';
+  },updatedFormatText,{timeout:10000});
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'messageViewToggle','focus stays on the toggle after the transcript refresh');
+  assert.ok(formatTranscriptFetches>=2,'a newer session event reloads the transcript');
+  await page.setViewportSize({width:1280,height:960});
+  await waitForFiniteAnimations(page);
+  await backToList(page);
+  await openAgent(page,formatKey);
+  await page.waitForFunction(()=>document.querySelector('#messageViewToggle')?.getAttribute('aria-pressed')==='true',null,{timeout:10000});
+  await waitForFiniteAnimations(page);
+  await page.locator('#messageViewToggle').press('Space');
+  await page.waitForFunction(()=>document.querySelector('#messageViewToggle')?.getAttribute('aria-pressed')==='false',null,{timeout:10000});
+  for(const view of [
+   {width:320,scheme:'light',language:'en'},
+   {width:320,scheme:'dark',language:'zh-TW'},
+   {width:480,scheme:'light',language:'zh-TW'},
+   {width:480,scheme:'dark',language:'en'},
+  ]){
+   await page.setViewportSize({width:view.width,height:800});
+   await page.emulateMedia({colorScheme:view.scheme});
+   await page.evaluate(language=>{applyLang(language);render()},view.language);
+   await page.waitForFunction(language=>langCode===language,view.language,{timeout:10000});
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${view.width}px ${view.scheme} message view has no page overflow`);
+   if(view.language==='zh-TW') assert.equal(await page.locator('#messageViewToggle').innerText(),'顯示原文');
+   await page.locator('#detailBody .msg.user').scrollIntoViewIfNeeded();
+   await screenshot(page,`message-view-${view.width}-${view.scheme}-${view.language}`);
+  }
+  await waitForFiniteAnimations(page);
+  await backToList(page);
+  await page.evaluate(s=>onData({now:Date.now(),sessions:[...state.data.sessions,s]}),otherFormatSession);
+  await openAgent(page,otherFormatKey);
+  await page.waitForFunction(()=>document.querySelector('#messageViewToggle')?.getAttribute('aria-pressed')==='false',null,{timeout:10000});
+  assert.equal(await page.locator('#detailBody .msg.user .msg-content').textContent(),'source','opening another session resets to formatted view');
+  check('conversation Markdown, safe source toggle, summaries, session updates and narrow view behave correctly');
   assert.deepEqual(errors,[]);check('no uncaught browser errors');
   console.log('TOTAL',checks.length);
  } finally {

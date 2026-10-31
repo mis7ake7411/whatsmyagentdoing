@@ -63,6 +63,9 @@ In the agent panel and compact views, sessions are grouped into **Needs you → 
 
 **Layout:** the office fills the window, with the agents listed in a side panel grouped by Needs you → Working → Finished. Click an agent there, or a person in the office, to open its status, model, folder, usage, resume command and recent conversation — your messages, its replies and the tools it ran, read from the end of its own log (full text for Claude Code and Codex). The panel slides away with its arrow and comes back from the tab at the top right; on phones it starts folded away. With `--private` the conversation is never sent to the page.
 
+Conversation messages use a safe Markdown subset in the reading view. **Show source** displays the exact snippet received by the page; each message is limited to 1,500 characters, so longer text omitted from that snippet is not available in either view.
+Headings, lists, quotes and code blocks are formatted; raw HTML stays text, images show their descriptions, and only HTTP(S) links are clickable. Card and list summaries use plain text while tool commands and error output retain their original text.
+
 **Agent badges:** in both 2D and 3D, each provider's logo identifies its agents beside their names, including subagents. The same icons appear in the legend, list cards and filters. Open **Settings → Agent badges** to hide the office markers and legend; your choice is saved. Icons are bundled locally, with initials as a fallback if an image cannot load. See [icon sources and attribution](assets/agents/README.md).
 
 The toolbar keeps the view, 2D/3D and pop-out controls visible. Scene, agent-filter and language menus are in the toolbar. Display options and notification settings are under **Settings**. Settings can opt into a compact PiP summary; expanding it opens the matching session list. A PiP-only project filter leaves the main dashboard and its notifications unchanged.
