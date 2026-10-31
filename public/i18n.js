@@ -237,6 +237,7 @@
   // Existing locales keep working; new shared labels fall back to English.
   const sharedLabels = {
     unknown: 'Status unknown', errors: 'Errors', observedStatus: 'Last observed status; not a live execution guarantee.',
+    officeSignalSummary: (stale, unknown) => `Observed status · stale ${stale} · unknown ${unknown}`,
     logTimeUnknown: 'Log time unavailable', lastLog: (t) => `Last log event: ${t} ago`,
     staleLog: (t) => `No new log events for ${t}; current state unconfirmed.`,
     staleMeaning: 'This does not mean the task has stopped or made no progress.',
@@ -287,6 +288,7 @@
   }
   Object.assign(S['zh-TW'], {
     unknown: '狀態未知', errors: '錯誤', observedStatus: '顯示最後觀察到的狀態，不保證目前仍在執行。',
+    officeSignalSummary: (stale, unknown) => `觀察狀態 · 過期 ${stale} · 未知 ${unknown}`,
     logTimeUnknown: '日誌時間未知', lastLog: (t) => `最後日誌：${t} 前`,
     staleLog: (t) => `已 ${t} 無新日誌，目前狀態待確認。`,
     staleMeaning: '這不代表任務停止或沒有實質進展。',

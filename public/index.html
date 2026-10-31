@@ -25,6 +25,7 @@
     --gemini: #4f7cf0;
     --copilot: #8f5cf5;
     --omp: #a96926;
+    --antigravity: #0ea5e9;
     --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
   }
   @media (prefers-color-scheme: dark) {
@@ -146,6 +147,11 @@
   .pending ul { margin: 4px 0 0; padding-left: 18px; }
   .office-signals { color: var(--muted); font-size: 12px; margin-bottom: 12px; overflow-wrap: anywhere; }
   .office-signals span { display: inline-block; margin: 0 12px 4px 0; }
+  .office-signal-disclosure { color: var(--muted); font-size: 12px; margin-bottom: 12px; overflow-wrap: anywhere; }
+  .office-signal-disclosure > summary { cursor: pointer; }
+  .office-signal-disclosure > summary:focus-visible { outline: 2px solid var(--tool); outline-offset: 2px; border-radius: 4px; }
+  .office-signal-detail { margin-top: 4px; line-height: 1.4; }
+  .office-signal-detail p { margin: 3px 0; }
   .q, .r { font-size: 12.5px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
   .q::before { content: "› "; color: var(--faint); }
   .r { color: var(--ink); opacity: .85; }
@@ -444,6 +450,9 @@
   body.pip .chip { padding: 2px 6px; font-size: 11px; }
   body.pip .summary { gap: 4px; width: auto; margin-left: 0; }
   body.pip .conn { gap: 3px 8px; margin: -4px 0 8px; padding: 6px 8px; font-size: 11px; }
+  body.pip .office-signals { margin-bottom: 0; }
+  body.pip .office-signal-disclosure { margin: -4px 0 4px; font-size: 11px; line-height: 1.35; }
+  body.pip .office-signal-detail { margin-top: 4px; }
   body.pip #officeWrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   body.pip .office { flex: 1; height: auto; min-height: 120px; }
   body.pip #main { overflow: auto; min-height: 0; }
@@ -550,6 +559,15 @@
     <span class="conn-note" id="connNote"></span>
   </aside>
   <aside id="officeSignals" class="office-signals" aria-live="polite"></aside>
+  <details id="officeSignalDetails" class="office-signal-disclosure" hidden>
+    <summary id="officeSignalSummary" aria-live="polite"></summary>
+    <div class="office-signal-detail">
+      <p id="officeSignalObserved"></p>
+      <p id="officeSignalStale" hidden></p>
+      <p id="officeSignalUnknown" hidden></p>
+      <p id="officeSignalDate"></p>
+    </div>
+  </details>
   <p class="pip-error" id="pipError" role="alert" hidden></p>
   <div class="pip-preview" id="pipPreview" hidden>
     <p data-t="pipVideoHint"></p>
@@ -917,6 +935,7 @@ function resumeCmd(s) {
   if (s.agent === 'claude') return `${cd}claude --resume ${shq(s.id)}`;
   if (s.agent === 'gemini') return `${cd}gemini --resume ${shq(s.sessionId || s.id)}`;
   if (s.agent === 'copilot') return `${cd}copilot --resume ${shq(s.sessionId || s.id)}`;
+  if (s.agent === 'antigravity') return `${cd}agy --conversation ${shq(s.id)}`;
   if (s.agent === 'kimi') return `${cd}kimi --session ${shq(s.sessionId || s.id)}`;
   if (s.agent === 'dsh') return `${cd}dsh tui --resume ${shq(s.id)}`;
   if (s.agent === 'grok') return `${cd}grok --resume ${shq(s.id)}`;
@@ -1031,12 +1050,28 @@ function render() {
   const officeList = all.filter((s) => s.status !== 'unknown' || needsInput(s))
     .map((s) => needsInput(s) ? { ...s, status: 'waiting' } : s);
   const staleCount = all.filter((s) => freshness(s, now).stale).length;
-  document.getElementById('officeSignals').style.display = summaryMode ? 'none' : '';
-  document.getElementById('officeSignals').innerHTML = officeMode && !summaryMode ? [
+  const officeSignals = document.getElementById('officeSignals');
+  officeSignals.style.display = summaryMode ? 'none' : '';
+  const officeSignalDetails = document.getElementById('officeSignalDetails');
+  const showOfficeSignals = officeMode && !summaryMode;
+  officeSignals.innerHTML = !PIP && showOfficeSignals ? [
     `<span>${esc(L.observedStatus)}</span>`,
     staleCount ? `<span>${esc(L.staleCount(staleCount))} ${esc(L.staleMeaning)}</span>` : '',
     count('unknown') ? `<span>${esc(L.unknown)}: ${count('unknown')} · ${esc(L.unknownOffice)}</span>` : '',
   ].join('') : '';
+  officeSignalDetails.hidden = !(PIP && showOfficeSignals);
+  if (PIP && showOfficeSignals) {
+    const unknownCount = count('unknown');
+    document.getElementById('officeSignalSummary').textContent = L.officeSignalSummary(staleCount, unknownCount);
+    document.getElementById('officeSignalObserved').textContent = L.observedStatus;
+    const staleDetail = document.getElementById('officeSignalStale');
+    staleDetail.hidden = !staleCount;
+    staleDetail.textContent = staleCount ? `${L.staleCount(staleCount)} ${L.staleMeaning}` : '';
+    const unknownDetail = document.getElementById('officeSignalUnknown');
+    unknownDetail.hidden = !unknownCount;
+    unknownDetail.textContent = unknownCount ? `${L.unknown}: ${unknownCount} · ${L.unknownOffice}` : '';
+    document.getElementById('officeSignalDate').textContent = connectionInfo().detailTime;
+  }
   const poppedOut = !!popout?.win;
   // Wait for the first snapshot so people start at their places instead of
   // all walking in through the door.
@@ -1119,13 +1154,15 @@ function formatConnectionDate(at) {
 function connectionInfo() {
   const status = state.connection === 'connected' ? L.connectionConnected
     : state.connection === 'disconnected' ? L.connectionDisconnected : L.connectionWaiting;
-  const time = state.lastUpdateAt == null ? L.noLastUpdate : `${L.lastUpdate}: ${formatConnectionDate(state.lastUpdateAt)} · ${L.updatedAgo(dur(Date.now() - state.lastUpdateAt))}`;
+  const detailTime = state.lastUpdateAt == null ? L.noLastUpdate : `${L.lastUpdate}: ${formatConnectionDate(state.lastUpdateAt)}`;
+  const relativeTime = state.lastUpdateAt == null ? L.noLastUpdate : L.updatedAgo(dur(Date.now() - state.lastUpdateAt));
+  const time = PIP || state.lastUpdateAt == null ? relativeTime : `${detailTime} · ${relativeTime}`;
   const note = state.connection === 'disconnected'
     ? state.lastUpdateAt == null ? L.connectionNoData : L.connectionDisconnectedLast
     : state.connection === 'waiting' && state.lastUpdateAt != null ? L.connectionWaitingLast : '';
   const previewStatus = state.connection === 'disconnected' ? L.previewDisconnected
     : state.connection === 'waiting' && state.lastUpdateAt != null ? L.previewWaiting : status;
-  return { status, time, note, previewStatus };
+  return { status, time, detailTime, note, previewStatus };
 }
 
 function renderConnection() {
@@ -1140,6 +1177,8 @@ function renderConnection() {
   const note = document.getElementById('connNote');
   if (note.textContent !== info.note) note.textContent = info.note;
   note.hidden = !info.note;
+  const detailTime = document.getElementById('officeSignalDate');
+  if (detailTime && detailTime.textContent !== info.detailTime) detailTime.textContent = info.detailTime;
   measureBar();
 }
 

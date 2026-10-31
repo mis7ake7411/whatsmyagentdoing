@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { newSession, applyCodex, applyClaude, applyGemini, applyGeminiDocument } = require('../src/parsers');
+const { newSession, applyCodex, applyClaude, applyGemini, applyGeminiDocument, applyAntigravity } = require('../src/parsers');
 const { snapshot } = require('../src/server');
 
 const OPTIONS = { demo: true, privacy: false };
@@ -93,6 +93,73 @@ test('Gemini document status evidence uses the nested message time instead of do
   const noTime = session('gemini');
   applyGemini(noTime, { type: 'user', content: 'No timestamp available' });
   assert.deepEqual(noTime.statusEvidence, { kind: 'user_message', at: null }, 'missing event time is not fabricated');
+});
+
+test('Antigravity status evidence describes source events without treating assistant text as completion evidence', () => {
+  const s = session('antigravity');
+  const userAt = BASE_TIME + 1_000;
+  applyAntigravity(s, {
+    type: 'USER_INPUT',
+    created_at: new Date(userAt).toISOString(),
+    timestamp: new Date(userAt + 5_000).toISOString(),
+    content: 'Start the task',
+  });
+  assert.deepEqual(s.statusEvidence, { kind: 'user_message', at: userAt });
+
+  const toolAt = userAt + 1_000;
+  applyAntigravity(s, {
+    type: 'PLANNER_RESPONSE',
+    timestamp: new Date(toolAt).toISOString(),
+    tool_calls: [{ name: 'run_command' }],
+  });
+  assert.deepEqual(s.statusEvidence, { kind: 'tool_call', at: toolAt });
+
+  const questionAt = toolAt + 1_000;
+  applyAntigravity(s, {
+    type: 'PLANNER_RESPONSE',
+    created_at: new Date(questionAt).toISOString(),
+    tool_calls: [{ name: 'ask_question' }],
+  });
+  assert.deepEqual(s.statusEvidence, { kind: 'question_request', at: questionAt });
+
+  const errorAt = questionAt + 1_000;
+  applyAntigravity(s, {
+    type: 'PLANNER_RESPONSE', status: 'ERROR',
+    timestamp: new Date(errorAt).toISOString(), content: 'Request failed',
+  });
+  assert.deepEqual(s.statusEvidence, { kind: 'turn_error', at: errorAt });
+
+  const assistantAt = errorAt + 1_000;
+  applyAntigravity(s, {
+    type: 'PLANNER_RESPONSE', status: 'DONE',
+    created_at: new Date(assistantAt).toISOString(), content: 'The task is complete.',
+  });
+  assert.equal(s.status, 'done', 'upstream parser completion state remains unchanged');
+  assert.deepEqual(s.statusEvidence, { kind: 'assistant_message', at: assistantAt });
+
+  const started = session('antigravity');
+  applyAntigravity(started, {
+    type: 'SYSTEM_MESSAGE', step_index: 0, created_at: new Date(userAt).toISOString(),
+    content: 'sender=c8c622b2-7934-4507-a879-9dbd9b06925b content=Subagent task',
+  });
+  assert.deepEqual(started.statusEvidence, { kind: 'turn_started', at: userAt });
+
+  const uppercaseSender = session('antigravity');
+  applyAntigravity(uppercaseSender, {
+    type: 'SYSTEM_MESSAGE', step_index: 0, created_at: new Date(userAt).toISOString(),
+    content: 'sender=C8C622B2-7934-4507-A879-9DBD9B06925B content=Subagent task',
+  });
+  assert.equal(uppercaseSender.subagent, false);
+  assert.deepEqual(uppercaseSender.statusEvidence, { kind: 'status_event', at: userAt });
+
+  const generic = session('antigravity');
+  applyAntigravity(generic, {
+    type: 'PLANNER_RESPONSE', timestamp: new Date(assistantAt).toISOString(),
+    tool_calls: [{ name: 'run_command' }],
+  });
+  applyAntigravity(generic, { type: 'GENERIC', timestamp: new Date(assistantAt + 1_000).toISOString() });
+  assert.equal(generic.status, 'thinking');
+  assert.deepEqual(generic.statusEvidence, { kind: 'status_event', at: assistantAt + 1_000 });
 });
 
 test('silence marks nonterminal status stale without changing the observed status', () => {

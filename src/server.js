@@ -70,7 +70,7 @@ function serveStream(res, file, headers) {
 }
 const ACTIVE = new Set(['thinking', 'tool', 'typing']);
 const STALE_AFTER_MS = 600_000;
-const SOURCE_AGENTS = new Set(['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp', 'magpie']);
+const SOURCE_AGENTS = new Set(['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp', 'antigravity', 'magpie']);
 
 // Keep the last observed status and report silence separately as freshness.
 function view(s, now, { privacy }, sourceHealth = null) {

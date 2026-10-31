@@ -36,3 +36,17 @@ test('silence marks active sessions stale without changing the observed status',
   assert.equal(by.f.status, 'tool'); assert.equal(by.f.stale, true);
   assert.ok(rows.every(row => row.stuck === undefined), 'silence is not reported as a stuck status');
 });
+
+test('Antigravity is included in the sanitized source snapshot', () => {
+  const { snapshot } = require('../src/server');
+  const health = { state: 'ok', lastSuccessAt: 123, reason: null };
+  const result = snapshot({
+    sessions: () => [{ agent: 'antigravity', id: 'session-1', status: 'thinking', lastEventAt: 123 }],
+    sourceHealthFor: () => health,
+    sources: () => [{ agent: 'antigravity', ...health, file: 'private/transcript.jsonl' }],
+  }, { privacy: false });
+
+  assert.deepEqual(result.sources, [{ agent: 'antigravity', ...health }]);
+  assert.deepEqual(result.sessions[0].sourceHealth, health);
+  assert.equal(JSON.stringify(result).includes('private/transcript.jsonl'), false);
+});

@@ -34,6 +34,7 @@ async function screenshotElement(page, locator, name) {
 }
 const clientsOnly = process.env.WMAD_UI_CLIENTS_ONLY === '1';
 const messageFormatOnly = process.env.WMAD_UI_MESSAGE_FORMAT_ONLY === '1';
+const officeSignalsOnly = process.env.WMAD_UI_OFFICE_SIGNALS_ONLY === '1';
 const checks=[];
 const check=(name)=>{checks.push(name);console.log('PASS',name)};
 const sessions = [
@@ -95,6 +96,95 @@ async function checkSideBelowStatus(page, context) {
  assert.ok(boxes.side>=boxes.connection-1&&boxes.side>=boxes.signals-1,
   `${context}: side panel covers connection health or status notes: ${JSON.stringify(boxes)}`);
 }
+async function checkCompactOfficeSignals(page, context) {
+ const mainState=await page.evaluate(()=>({view:state.view,quality:state.quality}));
+ const mainSignals=await page.locator('#officeSignals').innerHTML();
+ await page.evaluate(()=>{state.view='office';store.set('view','office');syncControls();render()});
+ await page.click('#qualSeg [data-v=high]');
+ await page.waitForFunction(()=>officeKind==='high:office'&&office?.loaded&&office.framesShown>4,{},{timeout:30000});
+ assert.match(await page.evaluate(()=>connectionInfo().time),/Last data update/,'the main page keeps its full connection date');
+ await page.click('#pipBtn');await page.waitForFunction(()=>!!popout.win);
+ const pip=context.pages().find(p=>p!==page);assert.ok(pip,'Document PiP opens a separate browser page');
+ const frame=await (async()=>{for(let i=0;i<100;i++){const f=pip.frames().find(f=>f.url().includes('?pip=1'));if(f)return f;await new Promise(r=>setTimeout(r,50))}throw Error('No compact frame')})();
+ await frame.waitForFunction(()=>PIP&&state.connection==='connected'&&office?.loaded&&office.framesShown>4,{},{timeout:30000});
+ const fixtures=(stale,unknown)=>[
+  ...Array.from({length:stale},(_,i)=>({key:`codex:stale-${i}`,agent:'codex',status:'tool',lastEventAt:Date.now()-(11+i)*60_000,staleAfterMs:600_000})),
+  ...Array.from({length:unknown},(_,i)=>({key:`codex:unknown-${i}`,agent:'codex',status:'unknown',lastEventAt:null})),
+  {key:'codex:fresh',agent:'codex',status:'thinking',lastEventAt:Date.now(),turnStartedAt:Date.now()},
+ ];
+ const initial=fixtures(2,1);
+ await frame.evaluate(s=>{window.__events?.close();onData({now:Date.now(),sessions:s});state.lastUpdateAt-=61*60_000;renderConnection();render()},initial);
+ let collapsedOfficeHeight=0;
+ for(const view of [
+  ...[736,320].flatMap(width=>['light','dark'].flatMap(scheme=>['en','zh-TW'].map(language=>({width,height:width===736?650:360,scheme,language})))),
+ ]) {
+  await pip.setViewportSize({width:view.width,height:view.height});
+  await pip.emulateMedia({colorScheme:view.scheme});
+  await frame.waitForFunction(w=>innerWidth===w,view.width,{timeout:10000});
+  await frame.evaluate(language=>{applyLang(language);render()},view.language);
+  await frame.waitForFunction(language=>langCode===language,view.language,{timeout:10000});
+  const compact=await frame.evaluate(()=>({
+   status:document.getElementById('connState').textContent,
+   time:document.getElementById('connTime').textContent,
+   summary:document.getElementById('officeSignalSummary')?.textContent||'',
+   total:document.getElementById('officeSignalDetails').getBoundingClientRect().bottom-document.getElementById('conn').getBoundingClientRect().top,
+   office:document.getElementById('officeWrap').getBoundingClientRect().toJSON(),
+   details:document.getElementById('officeSignalDetails')?.open,
+   overflow:document.documentElement.scrollWidth>innerWidth,
+  }));
+  assert.match(compact.status,/Connected|連線正常/,`${view.width}px ${view.language} keeps the connection state visible`);
+  assert.match(compact.time,/ago|前更新/,`${view.width}px ${view.language} shows relative update time`);
+  assert.ok(!/Last data update|最後資料更新/.test(compact.time),`${view.width}px ${view.language} keeps the full date out of the compact row`);
+  assert.match(compact.summary,view.language==='zh-TW'?/觀察狀態.*2.*1/:/Observed.*2.*1/,`${view.width}px ${view.language} shows the observed cue and stale/unknown counts`);
+  assert.ok(compact.total<=(view.width===736?80:100),`${view.width}x${view.height} keeps the connection and signal hint compact: ${JSON.stringify(compact)}`);
+  assert.equal(compact.details,false,'the explanations start collapsed');
+  assert.equal(compact.overflow,false,`${view.width}px ${view.scheme} has no horizontal overflow`);
+  assert.ok(compact.office.height>0&&compact.office.bottom<=view.height,`${view.width}x${view.height} keeps the office inside the PiP: ${JSON.stringify(compact.office)}`);
+  collapsedOfficeHeight=compact.office.height;
+  if ((view.width===736&&view.scheme==='dark'&&view.language==='zh-TW')||
+      (view.width===320&&view.scheme==='light'&&view.language==='zh-TW')) {
+   await screenshot(pip,`office-signals-${view.width}-${view.scheme}-${view.language}-compact`);
+  }
+ }
+ await pip.setViewportSize({width:320,height:360});
+ await pip.emulateMedia({colorScheme:'light'});
+ await frame.evaluate(()=>{applyLang('zh-TW');render()});
+ await frame.waitForFunction(()=>innerWidth===320&&langCode==='zh-TW',{},{timeout:10000});
+ await frame.locator('#officeSignalSummary').focus();
+ assert.equal(await frame.evaluate(()=>document.activeElement.id),'officeSignalSummary','the disclosure summary is keyboard focusable');
+ await pip.keyboard.press('Enter');
+ await frame.waitForFunction(()=>document.getElementById('officeSignalDetails')?.open===true,{},{timeout:10000});
+ const details=await frame.locator('#officeSignalDetails').innerText();
+ assert.match(details,/顯示最後觀察到的狀態|Last observed status/,'the expanded details explain observed-status limits');
+ assert.match(details,/過期|outdated activity/,'the expanded details explain stale activity');
+ assert.match(details,/不顯示為休息人物|Not shown as resting agents/,'the expanded details explain unknown status');
+ assert.match(details,/最後資料更新|Last data update/,'the expanded details include the full connection date');
+ await screenshot(pip,'office-signals-320-light-zh-TW-expanded');
+ const grownOffice=await frame.locator('#officeWrap').boundingBox();
+ assert.ok(grownOffice.height>0&&grownOffice.height<collapsedOfficeHeight&&grownOffice.y+grownOffice.height<=360,'expanded details use space while the office stays visible');
+ await frame.evaluate(s=>onData({now:Date.now(),sessions:s}),fixtures(3,2));
+ await frame.waitForFunction(()=>document.getElementById('officeSignalSummary')?.textContent.includes('3')&&document.getElementById('officeSignalSummary')?.textContent.includes('2'),{},{timeout:10000});
+ assert.equal(await frame.evaluate(()=>document.getElementById('officeSignalDetails').open),true,'data refresh preserves the expanded state');
+ assert.equal(await frame.evaluate(()=>document.activeElement.id),'officeSignalSummary','data refresh preserves keyboard focus');
+ assert.match(await frame.locator('#officeSignalDetails').innerText(),/3 個對話|3 sessions/,'expanded details update the stale count');
+ const sameSummary=await frame.evaluate(()=>document.getElementById('officeSignalSummary')===document.activeElement);
+ assert.equal(sameSummary,true,'the existing summary node is preserved during rendering');
+ await pip.keyboard.press('Space');
+ await frame.waitForFunction(()=>document.getElementById('officeSignalDetails').open===false,{},{timeout:10000});
+ await frame.evaluate(()=>{state.connection='disconnected';renderConnection()});
+ assert.match(await frame.locator('#conn').innerText(),/Dashboard disconnected|儀表板連線中斷/,'disconnect status stays visible');
+ assert.match(await frame.locator('#connNote').innerText(),/current agent state is unconfirmed|目前 Agent 狀態尚未確認/,'the stale-state disclaimer stays visible during disconnect');
+ await frame.evaluate(()=>{state.connection='waiting';renderConnection()});
+ assert.match(await frame.locator('#conn').innerText(),/Waiting for a valid dashboard update|等待有效的儀表板資料更新/,'waiting status stays visible');
+ assert.equal(await page.locator('#officeSignals').innerHTML(),mainSignals,'PiP changes leave the main office signals untouched');
+ await page.click('#pipBtn');await page.waitForFunction(()=>!popout.win&&office.visible,{},{timeout:10000});
+ await page.evaluate(view=>{state.view=view;store.set('view',view);syncControls();render()},mainState.view);
+ if (mainState.quality!=='high') {
+  await page.click(`#qualSeg [data-v=${mainState.quality}]`);
+  await page.waitForFunction(q=>state.quality===q&&officeKind.startsWith(q),mainState.quality,{timeout:30000});
+ }
+ check('Document PiP keeps connection and freshness hints compact, localizes details, preserves disclosure state, and keeps disconnect/wait status visible');
+}
 // The agent filter lives in a toolbar menu.
 async function filterAgent(t,v){if(!(await t.evaluate(()=>document.getElementById('agentMenu').open)))await t.click('#agentMenu > summary');await t.click(`#agentChips [data-v="${v}"]`);await t.keyboard.press('Escape')}
 async function drawnLogos(target) {
@@ -139,6 +229,12 @@ async function drawnLogos(target) {
   const page=await context.newPage();await page.goto(base);
   assert.equal(await page.evaluate(()=>typeof WMADNotificationRules),'object','the served dashboard loads its notification rules module');
   await stable(page);
+  if (officeSignalsOnly) {
+   await checkCompactOfficeSignals(page,context);
+   assert.deepEqual(errors,[]);check('no uncaught browser errors');
+   console.log('TOTAL',checks.length);
+   return;
+  }
   await page.waitForFunction(()=>state.connection==='connected'&&state.lastUpdateAt!==null);
   if (messageFormatOnly) await page.evaluate(()=>{store.set('lang','zh-TW');state.lang='zh-TW';applyLang('zh-TW');render()});
   if (!messageFormatOnly) {
@@ -154,6 +250,7 @@ async function drawnLogos(target) {
   await page.waitForFunction(()=>state.connection==='connected');
   mainUpdate=await page.evaluate(()=>state.lastUpdateAt);
   check('main page retains its last update through disconnect and recovers only on a valid snapshot');
+  await checkCompactOfficeSignals(page,context);
   assert.equal(await page.evaluate(()=>state.full&&document.body.classList.contains('full')),true,'full screen is the default');
   assert.equal(await page.locator('#side .srow').count()>0,true,'the agent panel lists the team');
   check('full screen with the agent panel is the default');
@@ -168,11 +265,12 @@ async function drawnLogos(target) {
    {agent:'dsh',state:'read_error',lastSuccessAt:null,reason:'read_failed'},
    {agent:'grok',state:'empty',lastSuccessAt:Date.now()-30_000,reason:'no_recent_logs'},
    {agent:'omp',state:'missing',lastSuccessAt:null,reason:'not_found'},
+   {agent:'antigravity',state:'ok',lastSuccessAt:Date.now()-10_000,reason:null},
   ];
   await page.setViewportSize({width:320,height:640});
   await page.emulateMedia({colorScheme:'dark'});
   await page.evaluate(sources=>onData({now:Date.now(),sessions:[],sources}),diagnosticSources);
-  await page.waitForFunction(()=>state.data.sessions.length===0&&document.querySelectorAll('#sourcesPanel .source-entry').length===8,null,{timeout:10000});
+  await page.waitForFunction(()=>state.data.sessions.length===0&&document.querySelectorAll('#sourcesPanel .source-entry').length===9,null,{timeout:10000});
   assert.equal(await page.locator('#sourcesMenu > summary').isVisible(),true,'the source menu remains reachable with no sessions');
   await page.click('#sourcesMenu > summary');
   await page.waitForFunction(()=>document.getElementById('sourcesMenu').open&&document.getElementById('sourcesPanel').getClientRects().length>0,null,{timeout:10000});
@@ -206,12 +304,12 @@ async function drawnLogos(target) {
    const p=panel.getBoundingClientRect(), r=row.getBoundingClientRect();
    return r.top>=p.top&&r.bottom<=p.bottom;
   },null,{timeout:10000});
-  assert.match(await bottomSource.innerText(),/OMP/,'the last source entry can be reached by scrolling');
+  assert.match(await bottomSource.innerText(),/Antigravity/,'the new source entry can be reached by scrolling');
   await page.evaluate(()=>{applyLang('en');render()});
   await page.waitForFunction(()=>langCode==='en',null,{timeout:10000});
   await page.keyboard.press('Escape');
   await page.waitForFunction(()=>!document.getElementById('sourcesMenu').open,null,{timeout:10000});
-  check('eight source diagnostics fit and scroll at 320px; labels localize and an error recovers in-place');
+  check('nine source diagnostics fit and scroll at 320px; labels localize and an error recovers in-place');
 
   const evidenceAt=Date.now()-30*60*1000;
   const contentReadAt=Date.now()-90*60*1000;
@@ -719,6 +817,20 @@ async function drawnLogos(target) {
   }
   check('Kimi, DSH and Grok support filters, subagents, resume commands and packaged logos in both offices');
   check('agent legends follow current sessions and filters, disappear when empty and return without duplicates in 2D/3D');
+  const antigravity = [
+   {key:'antigravity:conv-1',id:'conv-1',agent:'antigravity',status:'tool',activity:'Bash: npm test',cwd:'/demo/agy'},
+   {key:'antigravity:conv-2',id:'conv-2',parentId:'conv-1',subagent:true,agent:'antigravity',status:'thinking',cwd:'/demo/agy'},
+  ].map(s=>({...s,lastEventAt:Date.now()}));
+  await page.evaluate(s=>onData({now:Date.now(),sessions:s}),antigravity);
+  await page.waitForFunction(()=>{
+   const img=document.querySelector('#agentLegend img[src="/assets/agents/antigravity.png"]');
+   return img?.complete&&img.naturalWidth>0;
+  });
+  assert.match(await resumeOf(page,'antigravity:conv-1'),/agy --conversation 'conv-1'/);
+  await page.waitForFunction(keys=>office.people.size===keys.length&&keys.every(k=>office.people.has(k)),antigravity.map(s=>s.key));
+  assert.deepEqual(await drawnLogos(page),['antigravity']);
+  await page.evaluate(s=>onData({now:Date.now(),sessions:s}),nativeClients);
+  check('Antigravity CLI sessions show their logo, subagents and agy --conversation resume command');
   for (const colorScheme of ['light','dark']) {
    await page.emulateMedia({colorScheme});
    await openSettings(page);

@@ -1,6 +1,6 @@
 {
   "name": "whatsmyagentdoing",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Live office for Claude Code, Codex, Gemini CLI and OMP sessions.",
   "bin": {
     "whatsmyagentdoing": "bin/cli.js"
@@ -41,12 +41,13 @@
   "scripts": {
     "build": "esbuild web/office3d.js --bundle --format=esm --minify --target=es2020 --outfile=public/office3d.js --legal-comments=eof",
     "start": "node bin/cli.js",
-    "test": "npm run test:unit && npm run test:magpie && npm run test:clients && npm run test:copilot && npm run test:hook && npm run test:transcript && npm run test:ui",
+    "test": "npm run test:unit && npm run test:magpie && npm run test:clients && npm run test:copilot && npm run test:antigravity && npm run test:hook && npm run test:transcript && npm run test:ui",
     "test:unit": "node --test tests/server.cjs tests/status.test.js tests/status-ui.test.js tests/watcher.cjs tests/omp.cjs tests/message-format.test.cjs",
     "test:ui": "node tests/ui.cjs",
     "test:watcher": "node --test tests/watcher.cjs tests/omp.cjs",
     "test:magpie": "node --test tests/magpie.cjs",
     "test:copilot": "node --test tests/copilot.cjs",
+    "test:antigravity": "node --test tests/antigravity.cjs",
     "test:hook": "node --test tests/hook.cjs tests/usage.cjs",
     "test:transcript": "node --test tests/transcript.cjs",
     "test:server": "node --test tests/server.cjs",

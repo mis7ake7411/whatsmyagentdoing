@@ -182,6 +182,23 @@ function statusKind(agent, d) {
       }
       return 'status_event';
     }
+    case 'antigravity': {
+      if (d.type === 'USER_INPUT') return 'user_message';
+      if (d.type === 'SYSTEM_MESSAGE') {
+        const startsSubagent = d.step_index === 0
+          && typeof d.content === 'string'
+          && /sender=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.test(d.content);
+        return startsSubagent ? 'turn_started' : 'status_event';
+      }
+      if (d.type === 'PLANNER_RESPONSE') {
+        if (d.status === 'ERROR') return 'turn_error';
+        const calls = Array.isArray(d.tool_calls) ? d.tool_calls : [];
+        if (calls.some((call) => call?.name === 'ask_question')) return 'question_request';
+        if (calls.length) return 'tool_call';
+        return textValue(d.content) ? 'assistant_message' : 'status_event';
+      }
+      return 'status_event';
+    }
     default: return 'status_event';
   }
 }
@@ -195,6 +212,7 @@ function statusEventTime(agent, d) {
       : d.customType === 'session_exit' ? d.data?.recordedAt : null;
     return eventTime(d.timestamp || d.message?.timestamp || customTime);
   }
+  if (agent === 'antigravity') return eventTime(d.created_at || d.timestamp);
   return eventTime(d.timestamp);
 }
 

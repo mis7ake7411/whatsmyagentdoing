@@ -163,7 +163,7 @@ test('source snapshots distinguish absent roots from empty sources and keep actu
   const f = fixture(t);
   f.watcher.tick();
   let out = snapshot(f.watcher, { demo: true, privacy: false });
-  assert.equal(out.sources.length, 8);
+  assert.equal(out.sources.length, 9);
   assert.equal(out.sources.find(source => source.agent === 'codex').state, 'missing');
 
   fs.mkdirSync(path.join(f.root, '.codex/sessions'), { recursive: true });
@@ -184,6 +184,32 @@ test('source snapshots distinguish absent roots from empty sources and keep actu
   assert.equal(out.sources.find(source => source.agent === 'codex').lastSuccessAt, firstRead, 'unchanged polling does not count as a read');
   assert.equal(out.sessions[0].sourceHealth.state, 'ok');
   assert.equal(JSON.stringify(out).includes(log.file), false, 'serialized diagnostics never include log paths');
+});
+
+test('Antigravity source health tracks its root and successful transcript reads', t => {
+  const f = fixture(t);
+  f.watcher.tick();
+  let out = snapshot(f.watcher, { demo: true, privacy: false });
+  assert.equal(out.sources.find(source => source.agent === 'antigravity').state, 'missing');
+
+  const root = path.join(f.root, '.gemini/antigravity-cli/brain');
+  const id = '11111111-2222-3333-4444-555555555555';
+  const file = path.join(root, id, '.system_generated/logs/transcript.jsonl');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({
+    type: 'USER_INPUT', created_at: new Date(NOW - 1000).toISOString(), content: 'Inspect the project',
+  }) + '\n');
+  fs.utimesSync(file, new Date(NOW), new Date(NOW));
+
+  f.advance(6000);
+  f.watcher.tick();
+  out = snapshot(f.watcher, { demo: true, privacy: false });
+  const source = out.sources.find(item => item.agent === 'antigravity');
+  assert.equal(source.state, 'ok');
+  assert.equal(source.lastSuccessAt, NOW + 6000);
+  assert.equal(out.sessions[0].sourceHealth.state, 'ok');
+  assert.deepEqual(out.sessions[0].statusEvidence, { kind: 'user_message', at: NOW - 1000 });
+  assert.equal(JSON.stringify(out).includes(file), false, 'source diagnostics do not expose transcript paths');
 });
 
 test('old Claude, Gemini and Copilot files do not make empty sources look healthy', t => {
