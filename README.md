@@ -218,6 +218,28 @@ the connection drops, the page keeps the last received snapshot and marks the
 current agent state unconfirmed. Reconnection is confirmed only after a valid
 snapshot arrives, even if its session data is unchanged.
 
+The header's **Log sources** menu reports each agent source as available,
+missing, empty in the configured time window, unreadable, unparsable, or
+unavailable. Missing means the source is absent or not installed; empty means no
+logs were found in the selected window. Its timestamp is the most recent
+successful read of log content, not the time the source was checked or the page
+was updated. Session details separately show the allowlisted category and
+original timestamp of the last observed state event, plus the source health and
+its successful content-read time. These diagnostics use fixed descriptions and
+do not display source paths or raw reason strings; event evidence is category
+and timestamp metadata, while recent conversation content stays in its separate
+view. Older snapshots without these fields are shown as unavailable; the page
+does not infer them from log freshness or dashboard polling.
+
+Source health is aggregated per agent: one unreadable or malformed log can mark
+the source unhealthy even while other sessions remain readable. A successful
+content read does not necessarily mean parsing succeeded. A malformed-record
+warning clears after a later clean read of that file or when it leaves the
+discovered set; intentionally incomplete JSONL tails are not parse failures.
+Read failures retain the last readable session while retrying. Magpie source
+diagnostics are currently unavailable, and unsupported event details use a
+generic state-event label or no evidence rather than guessing.
+
 Unanswered questions and approval requests are tracked separately from tool
 activity. The list can show a running tool and a pending question together;
 the office uses its existing waiting animation. Related answers, cancellations,

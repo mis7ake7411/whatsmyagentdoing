@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 // Session store roots, not the per-chat artifact directories.
-function ompDirs(override, env = process.env, home = os.homedir(), platform = process.platform) {
+function ompDirs(override, env = process.env, home = os.homedir(), platform = process.platform, onDirectory) {
   const active = env.OMP_PROFILE !== undefined ? env.OMP_PROFILE : env.PI_PROFILE;
   const named = value => value && value !== 'default' && /^[\w][\w.-]*$/.test(value) ? value : null;
   if (override || env.WMAD_OMP_SESSIONS_DIR) {
@@ -13,11 +13,14 @@ function ompDirs(override, env = process.env, home = os.homedir(), platform = pr
   }
   const base = path.join(home, '.omp');
   const profiles = new Set();
+  const profileDir = path.join(base, 'profiles');
   try {
-    for (const e of fs.readdirSync(path.join(base, 'profiles'), { withFileTypes: true })) {
+    const entries = fs.readdirSync(profileDir, { withFileTypes: true });
+    onDirectory?.(profileDir, null);
+    for (const e of entries) {
       if (e.isDirectory()) profiles.add(e.name);
     }
-  } catch {}
+  } catch (error) { onDirectory?.(profileDir, error); }
   if (named(active)) profiles.add(active);
   const sessionDir = (profile) => {
     const root = profile ? path.join(base, 'profiles', profile) : base;

@@ -82,6 +82,19 @@
   .settings[open] > summary::after { margin-top: 3px; transform: rotate(-135deg); }
   .filter-active { font-size: 11px; color: var(--tool); }
   .settings-panel { position: absolute; z-index: 20; right: 0; top: calc(100% + 10px); width: min(360px, calc(100vw - 32px)); max-height: calc(100dvh - 180px); overflow-y: auto; overscroll-behavior: contain; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 40px #0003; }
+  .sources-panel { width: min(380px, calc(100vw - 32px)); }
+  .source-entry { padding: 10px 0; }
+  .source-entry + .source-entry { border-top: 1px solid var(--line); }
+  .source-entry-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .source-agent { color: var(--ink); font-size: 13px; font-weight: 600; }
+  .source-state { color: var(--muted); font-size: 12px; text-align: right; }
+  .source-time, .source-reason { margin-top: 4px; color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+  .source-reason { color: var(--faint); }
+  .state-evidence { margin: 12px 0; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--ink) 3%, var(--panel)); }
+  .state-evidence-row + .state-evidence-row { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); }
+  .state-evidence-label { display: block; color: var(--muted); font-size: 11px; }
+  .state-evidence-value { display: block; margin-top: 3px; color: var(--ink); font-size: 12px; overflow-wrap: anywhere; }
+  .state-evidence-reason { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
   .setting-group + .setting-group { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
   .setting-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 9px; }
   .setting-toggles { display: grid; gap: 12px; margin-top: 14px; }
@@ -316,7 +329,8 @@
     body.full #sceneName { max-width: 6.5em; }
     body.full details.menu > summary::after,
     body.full #agentName, body.full #langName, body.full .today-tokens,
-    body.full #todayMenu > summary [data-t], body.full #settingsMenu > summary [data-t] { display: none; }
+    body.full #todayMenu > summary [data-t], body.full #settingsMenu > summary [data-t],
+    body.full #sourcesMenu > summary [data-t] { display: none; }
     body.full details.menu.active > summary { position: relative; }
     body.full details.menu.active > summary::before { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--tool); }
   }
@@ -457,6 +471,10 @@
           <div class="setting-label" data-t="agents"></div>
           <div class="pick-list" id="agentChips" role="group"></div>
         </div>
+      </details>
+      <details class="settings menu" id="sourcesMenu">
+        <summary class="btn" aria-controls="sourcesPanel" data-a="logSources"><svg class="ui-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5zM8 8h8M8 11.5h8M8 15h5"/></svg><span data-t="logSources"></span></summary>
+        <div class="settings-panel sources-panel" id="sourcesPanel" aria-live="polite"></div>
       </details>
       <details class="settings menu" id="langMenu">
         <summary class="btn" aria-controls="langPanel" data-a="language"><svg class="ui-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 12h17.2M12 3.2c2.6 2.6 3.7 5.6 3.7 8.8s-1.1 6.2-3.7 8.8M12 3.2C9.4 5.8 8.3 8.8 8.3 12s1.1 6.2 3.7 8.8"/></svg><span id="langName"></span></summary>
@@ -771,6 +789,98 @@ function evidence(s, now) {
   return `<div class="evidence"><p>${esc(logTime)}</p>${stale}</div>`;
 }
 
+const SOURCE_STATE_LABELS = {
+  ok: 'sourceStateOk', missing: 'sourceStateMissing', empty: 'sourceStateEmpty',
+  read_error: 'sourceStateReadError', parse_error: 'sourceStateParseError', unavailable: 'sourceStateUnavailable',
+};
+const SOURCE_REASON_LABELS = {
+  not_found: 'sourceReasonNotFound', no_recent_logs: 'sourceReasonNoRecentLogs',
+  reading_denied: 'sourceReasonReadingDenied', read_failed: 'sourceReasonReadFailed',
+  invalid_json: 'sourceReasonInvalidJson', parser_failed: 'sourceReasonParserFailed',
+  decode_failed: 'sourceReasonDecodeFailed', not_instrumented: 'sourceReasonNotInstrumented',
+};
+const EVIDENCE_KIND_LABELS = {
+  user_message: 'evidenceKindUserMessage', assistant_message: 'evidenceKindAssistantMessage',
+  tool_call: 'evidenceKindToolCall', tool_result: 'evidenceKindToolResult',
+  turn_started: 'evidenceKindTurnStarted', turn_completed: 'evidenceKindTurnCompleted',
+  turn_interrupted: 'evidenceKindTurnInterrupted', turn_error: 'evidenceKindTurnError',
+  approval_request: 'evidenceKindApprovalRequest', question_request: 'evidenceKindQuestionRequest',
+  permission_hook: 'evidenceKindPermissionHook', status_event: 'evidenceKindStatusEvent',
+};
+
+let evidenceDateFormatter = null;
+let evidenceDateLocale = null;
+function localDateTime(value) {
+  if (!Number.isFinite(value) || Math.abs(value) > 8640000000000000) return null;
+  try {
+    if (!evidenceDateFormatter || evidenceDateLocale !== L.html) {
+      evidenceDateFormatter = new Intl.DateTimeFormat(L.html, { dateStyle: 'medium', timeStyle: 'short' });
+      evidenceDateLocale = L.html;
+    }
+    return evidenceDateFormatter.format(new Date(value));
+  }
+  catch { return null; }
+}
+
+function sourceReasonText(reason) {
+  const key = typeof reason === 'string' && Object.hasOwn(SOURCE_REASON_LABELS, reason) ? SOURCE_REASON_LABELS[reason] : null;
+  return key ? L[key] : '';
+}
+
+function sourceStateText(value) {
+  const key = typeof value === 'string' && Object.hasOwn(SOURCE_STATE_LABELS, value) ? SOURCE_STATE_LABELS[value] : 'sourceStateUnavailable';
+  return L[key];
+}
+
+function sourceEntryHtml(source) {
+  const agent = typeof source?.agent === 'string' && validAgentId(source.agent) ? source.agent : '';
+  const name = agent ? AGENT_NAME[agent] || agent : L.pipUnavailable;
+  const lastRead = localDateTime(source?.lastSuccessAt);
+  const reason = sourceReasonText(source?.reason);
+  return `<div class="source-entry">
+    <div class="source-entry-head"><span class="source-agent">${esc(name)}</span><span class="source-state">${esc(sourceStateText(source?.state))}</span></div>
+    <div class="source-time">${esc(lastRead ? L.lastSuccessfulContentRead(lastRead) : L.noSuccessfulContentRead)}</div>
+    ${reason ? `<div class="source-reason">${esc(reason)}</div>` : ''}
+  </div>`;
+}
+
+function sourceDiagnosticsHtml(sources) {
+  if (!Array.isArray(sources)) return `<div class="setting-label">${esc(L.logSourcesHeading)}</div><p class="today-note">${esc(L.sourceDiagnosticsUnavailable)}</p>`;
+  if (!sources.length) return `<div class="setting-label">${esc(L.logSourcesHeading)}</div><p class="today-note">${esc(L.sourceDiagnosticsEmpty)}</p>`;
+  return `<div class="setting-label">${esc(L.logSourcesHeading)}</div>${sources.map(sourceEntryHtml).join('')}`;
+}
+
+function renderSourceDiagnostics() {
+  const panel = document.getElementById('sourcesPanel');
+  if (!panel) return;
+  const html = sourceDiagnosticsHtml(state.data?.sources);
+  if (panel.dataset.html !== html) { panel.innerHTML = html; panel.dataset.html = html; }
+}
+
+function sessionEvidenceHtml(s) {
+  const evidence = s?.statusEvidence;
+  const kindKey = typeof evidence?.kind === 'string' && Object.hasOwn(EVIDENCE_KIND_LABELS, evidence.kind)
+    ? EVIDENCE_KIND_LABELS[evidence.kind] : null;
+  const eventAt = localDateTime(evidence?.at);
+  const eventText = kindKey
+    ? `${esc(L[kindKey])} · ${esc(eventAt || L.eventTimeUnavailable)}`
+    : evidence && typeof evidence === 'object'
+      ? `${esc(L.eventTypeUnavailable)} · ${esc(eventAt || L.eventTimeUnavailable)}`
+      : esc(L.noStateEvidence);
+  const health = s?.sourceHealth;
+  const healthText = health && typeof health === 'object'
+    ? sourceStateText(health.state) : L.sourceHealthUnavailable;
+  const readAt = localDateTime(health?.lastSuccessAt);
+  const readText = health && typeof health === 'object'
+    ? (readAt ? L.lastSuccessfulContentRead(readAt) : L.noSuccessfulContentRead)
+    : L.sourceHealthUnavailable;
+  const reason = health && health.state !== 'ok' ? sourceReasonText(health.reason) : '';
+  return `<section class="state-evidence" aria-label="${esc(L.stateEvidenceHeading)}">
+    <div class="state-evidence-row"><span class="state-evidence-label">${esc(L.stateEvidenceHeading)}</span><span class="state-evidence-value">${eventText}</span></div>
+    <div class="state-evidence-row"><span class="state-evidence-label">${esc(L.sourceHealthHeading)}</span><span class="state-evidence-value">${esc(healthText)} · ${esc(readText)}</span>${reason ? `<span class="state-evidence-reason">${esc(reason)}</span>` : ''}</div>
+  </section>`;
+}
+
 function pending(s) {
   if (!needsInput(s)) return '';
   const requests = s.pendingRequests || [];
@@ -869,6 +979,7 @@ function visible() {
 
 function render() {
   const now = Date.now() - state.skew;
+  renderSourceDiagnostics();
   const list = visible();
   const all = state.data.sessions.filter((s) => matchAgent(s) && pipProjectMatches(s) && (state.showSub || !s.subagent));
 
@@ -1661,6 +1772,7 @@ function renderDetail(scrollDown) {
     ${s.error ? `<div class="err">${esc(s.error)}</div>` : ''}
     ${pending(s)}
     ${evidence(s, now)}
+    ${sessionEvidenceHtml(s)}
     <dl class="dmeta">
       <dt>${esc(L.modelL)}</dt><dd>${esc(s.model || '—')}${s.subagent ? ` · ${esc(L.sub)}` : ''}</dd>
       <dt>${esc(L.folderL)}</dt><dd class="mono" title="${esc(s.cwd || '')}">${esc(s.cwd || '—')}</dd>

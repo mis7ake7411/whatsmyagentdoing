@@ -154,6 +154,84 @@ async function drawnLogos(target) {
   check('full screen with the agent panel is the default');
   assert.equal(await page.locator('#fullBtn').count(),0,'there is no way back to the old layout');
   await checkFullScreenInsets(page);
+  const diagnosticSources=[
+   {agent:'claude',state:'empty',lastSuccessAt:Date.now()-60_000,reason:'no_recent_logs'},
+   {agent:'codex',state:'read_error',lastSuccessAt:null,reason:'reading_denied'},
+   {agent:'gemini',state:'missing',lastSuccessAt:null,reason:'not_found'},
+   {agent:'copilot',state:'parse_error',lastSuccessAt:Date.now()-20_000,reason:'invalid_json'},
+   {agent:'kimi',state:'unavailable',lastSuccessAt:null,reason:'not_instrumented'},
+   {agent:'dsh',state:'read_error',lastSuccessAt:null,reason:'read_failed'},
+   {agent:'grok',state:'empty',lastSuccessAt:Date.now()-30_000,reason:'no_recent_logs'},
+   {agent:'omp',state:'missing',lastSuccessAt:null,reason:'not_found'},
+  ];
+  await page.setViewportSize({width:320,height:640});
+  await page.emulateMedia({colorScheme:'dark'});
+  await page.evaluate(sources=>onData({now:Date.now(),sessions:[],sources}),diagnosticSources);
+  await page.waitForFunction(()=>state.data.sessions.length===0&&document.querySelectorAll('#sourcesPanel .source-entry').length===8,null,{timeout:10000});
+  assert.equal(await page.locator('#sourcesMenu > summary').isVisible(),true,'the source menu remains reachable with no sessions');
+  await page.click('#sourcesMenu > summary');
+  await page.waitForFunction(()=>document.getElementById('sourcesMenu').open&&document.getElementById('sourcesPanel').getClientRects().length>0,null,{timeout:10000});
+  const diagnosticText=await page.locator('#sourcesPanel').innerText();
+  assert.match(diagnosticText,/Not installed or source path not found/);
+  assert.match(diagnosticText,/No logs in the selected time range/);
+  assert.match(diagnosticText,/Read access was denied/);
+  assert.match(diagnosticText,/Could not parse the log source/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'the open source menu fits a 320px window');
+  const sourcePanelBox=await page.locator('#sourcesPanel').boundingBox();
+  assert.ok(sourcePanelBox&&sourcePanelBox.x>=0&&sourcePanelBox.x+sourcePanelBox.width<=320,`source menu stays inside the narrow window: ${JSON.stringify(sourcePanelBox)}`);
+  const recoveredReadAt=Date.now()-5*60*1000;
+  await page.evaluate(([sources,readAt])=>onData({now:Date.now(),sessions:[],sources:sources.map(source=>source.agent==='codex'
+   ? {...source,state:'ok',lastSuccessAt:readAt,reason:null} : source)}),[diagnosticSources,recoveredReadAt]);
+  await page.waitForFunction(()=>{
+   const row=[...document.querySelectorAll('#sourcesPanel .source-entry')].find(item=>item.querySelector('.source-agent')?.textContent==='Codex');
+   return row?.querySelector('.source-state')?.textContent==='Available';
+  },null,{timeout:10000});
+  assert.equal(await page.locator('#sourcesMenu').evaluate(menu=>menu.open),true,'the source menu stays open when diagnostics recover');
+  assert.equal(await page.locator('#sourcesMenu > summary').evaluate(summary=>document.activeElement===summary),true,'recovery keeps keyboard focus on the menu');
+  assert.match(await page.locator('#sourcesPanel').innerText(),/Last successful content read/);
+  await page.evaluate(()=>{applyLang('zh-TW');render()});
+  await page.waitForFunction(()=>langCode==='zh-TW'&&document.querySelector('#sourcesPanel .setting-label')?.textContent==='Agent 記錄來源',null,{timeout:10000});
+  assert.match(await page.locator('#sourcesPanel').innerText(),/未安裝或找不到來源路徑/);
+  await screenshot(page,'source-diagnostics-320-dark-zh-tw');
+  const bottomSource=page.locator('#sourcesPanel .source-entry').last();
+  await bottomSource.scrollIntoViewIfNeeded();
+  await page.waitForFunction(()=>{
+   const panel=document.getElementById('sourcesPanel'), row=panel?.querySelector('.source-entry:last-child');
+   if(!panel||!row)return false;
+   const p=panel.getBoundingClientRect(), r=row.getBoundingClientRect();
+   return r.top>=p.top&&r.bottom<=p.bottom;
+  },null,{timeout:10000});
+  assert.match(await bottomSource.innerText(),/OMP/,'the last source entry can be reached by scrolling');
+  await page.evaluate(()=>{applyLang('en');render()});
+  await page.waitForFunction(()=>langCode==='en',null,{timeout:10000});
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>!document.getElementById('sourcesMenu').open,null,{timeout:10000});
+  check('eight source diagnostics fit and scroll at 320px; labels localize and an error recovers in-place');
+
+  const evidenceAt=Date.now()-30*60*1000;
+  const contentReadAt=Date.now()-90*60*1000;
+  const priorLogAt=Date.now()-24*60*60*1000;
+  const evidenceSession={key:'codex:evidence',id:'evidence',agent:'codex',project:'evidence-project',status:'tool',activity:'Read: app.js',
+   lastEventAt:priorLogAt,turnStartedAt:Date.now()-1000,statusEvidence:{kind:'assistant_message',at:evidenceAt},
+   sourceHealth:{state:'ok',lastSuccessAt:contentReadAt,reason:null}};
+  await page.evaluate(([session,readAt])=>onData({now:Date.now(),sessions:[session],sources:[{agent:'codex',state:'ok',lastSuccessAt:readAt,reason:null}]}),[evidenceSession,contentReadAt]);
+  await page.setViewportSize({width:480,height:800});
+  await page.emulateMedia({colorScheme:'light'});
+  await page.waitForFunction(()=>document.querySelector('#side .srow[data-key="codex:evidence"]'),null,{timeout:10000});
+  await openAgent(page,'codex:evidence');
+  await page.waitForFunction(()=>document.querySelector('#detailBody .state-evidence')?.getClientRects().length>0,null,{timeout:10000});
+  const expectedEventTime=await page.evaluate(at=>new Intl.DateTimeFormat(langCode,{dateStyle:'medium',timeStyle:'short'}).format(new Date(at)),evidenceAt);
+  const expectedReadTime=await page.evaluate(at=>new Intl.DateTimeFormat(langCode,{dateStyle:'medium',timeStyle:'short'}).format(new Date(at)),contentReadAt);
+  const detailText=await page.locator('#detailBody').innerText();
+  assert.match(detailText,/Assistant message/);
+  assert.ok(detailText.includes(expectedEventTime),'detail shows the original state-event time');
+  assert.ok(detailText.includes(expectedReadTime),'detail shows the last successful content-read time');
+  assert.match(detailText,/Last successful content read/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'the detail evidence fits a 480px window');
+  await screenshot(page,'status-evidence-480-light');
+  await backToList(page);
+  await page.setViewportSize({width:1280,height:960});
+  check('session detail separates state-event time from successful content-read time');
   assert.equal(await page.locator('h1 [data-t]').innerText(),"What's my agent doing");
   assert.equal(await page.evaluate(()=>state.showSub),false,'subagents stay hidden by default for every provider');
   await openSettings(page);await page.check('#showSub');await page.keyboard.press('Escape');

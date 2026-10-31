@@ -17,6 +17,21 @@ const loop = (type, extra = {}) => kimi('context.append_loop_event', { event: { 
 const dsh = (type, data = {}) => ({ type, time: NOW, data });
 const grok = (sessionUpdate, extra = {}) => ({ timestamp: NOW / 1000, params: { update: { sessionUpdate, ...extra } } });
 
+test('Grok evidence uses the fallback tool status stored in update metadata', () => {
+  const s = newSession('grok', 'one');
+  applyGrok(s, grok('tool_call', { toolCallId: 'call-1', title: 'Read' }));
+  assert.equal(s.status, 'tool');
+  applyGrok(s, {
+    timestamp: NOW / 1000,
+    params: {
+      update: { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', title: 'Read' },
+      _meta: { updateParams: { status: 'completed' } },
+    },
+  });
+  assert.equal(s.status, 'thinking');
+  assert.deepEqual(s.statusEvidence, { kind: 'tool_result', at: NOW });
+});
+
 test('Kimi tracks parallel tools and questions, and ignores per-request completion', () => {
   const s = newSession('kimi', 'one');
   applyKimi(s, kimi('turn.prompt', { input: [{ type: 'text', text: 'Example task' }] }));

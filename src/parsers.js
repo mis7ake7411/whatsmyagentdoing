@@ -13,6 +13,7 @@
 //   interrupted, error, idle
 
 const path = require('path');
+const { withStatusEvidence, recordStatusEvidence } = require('./diagnostics');
 
 const WAITING_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
 
@@ -27,6 +28,7 @@ function newSession(agent, id, file) {
     subagent: false,
     parentId: null,
     status: 'unknown',
+    statusEvidence: null,
     activity: null,
     pendingRequests: [],
     prompt: null,
@@ -107,6 +109,7 @@ function set(s, status, activity) {
   s.status = status;
   if (activity !== undefined) s.activity = activity;
   if (status !== 'error') s.error = null;
+  recordStatusEvidence(s);
 }
 
 function pendingRequests(s) {
@@ -691,7 +694,7 @@ function applyGemini(s, d) {
     if (Array.isArray(meta.directories) && meta.directories[0] && !s.cwd) s.cwd = meta.directories[0];
     if (meta.summary) s.title = clean(meta.summary, 80);
     if (meta.startTime) stamp(s, meta.startTime);
-    if (Array.isArray(meta.messages)) for (const m of meta.messages) applyGemini(s, m);
+    if (Array.isArray(meta.messages)) for (const m of meta.messages) applyGeminiWithEvidence(s, m);
     return;
   }
   if (d.$patch || d.$rewindTo || !d.type) return;
@@ -746,7 +749,7 @@ function applyGemini(s, d) {
 
 // Legacy whole-file .json sessions.
 function applyGeminiDocument(s, doc) {
-  applyGemini(s, { $set: doc });
+  applyGeminiWithEvidence(s, { $set: doc });
 }
 
 // ----------------------------------------------------------------------- OMP
@@ -853,4 +856,33 @@ function applyOMP(s, d) {
   else set(s, 'thinking', null);
 }
 
-module.exports = { dayKey, newSession, applyClaude, applyCodex, applyGemini, applyGeminiDocument, applyCopilot, applyOMP, clean, describeClaudeTool, describeCodexCall, codexText };
+function applyClaudeWithEvidence(s, d) {
+  return withStatusEvidence(s, 'claude', d, () => applyClaude(s, d));
+}
+
+function applyCodexWithEvidence(s, d) {
+  return withStatusEvidence(s, 'codex', d, () => applyCodex(s, d));
+}
+
+function applyCopilotWithEvidence(s, d) {
+  return withStatusEvidence(s, 'copilot', d, () => applyCopilot(s, d));
+}
+
+function applyGeminiWithEvidence(s, d) {
+  return withStatusEvidence(s, 'gemini', d, () => applyGemini(s, d));
+}
+
+function applyOMPWithEvidence(s, d) {
+  return withStatusEvidence(s, 'omp', d, () => applyOMP(s, d));
+}
+
+module.exports = {
+  dayKey, newSession,
+  applyClaude: applyClaudeWithEvidence,
+  applyCodex: applyCodexWithEvidence,
+  applyGemini: applyGeminiWithEvidence,
+  applyGeminiDocument,
+  applyCopilot: applyCopilotWithEvidence,
+  applyOMP: applyOMPWithEvidence,
+  clean, describeClaudeTool, describeCodexCall, codexText,
+};

@@ -22,6 +22,18 @@ const lines = entries => entries.map(e=>JSON.stringify(e)+'\n').join('');
 const session = () => newSession('omp',null,'/tmp/sample.jsonl');
 const apply = (s,...es) => {for(const e of es)applyOMP(s,e);return s;};
 
+test('OMP status evidence reflects pending tool calls and uses custom event timestamps',()=>{
+ const s=apply(session(),user(),assistant([call('one')],'stop'));
+ assert.equal(s.status,'tool','a pending tool remains active even when the assistant stop marker is present');
+ assert.deepEqual(JSON.parse(JSON.stringify(s.statusEvidence)),{kind:'tool_call',at:NOW});
+ apply(s,assistant([{type:'text',text:'Still working'}],'stop'));
+ assert.equal(s.status,'tool','a previous pending call still blocks the turn end');
+ assert.deepEqual(JSON.parse(JSON.stringify(s.statusEvidence)),{kind:'status_event',at:NOW});
+ const startedAt=NOW+5000;
+ applyOMP(s,{type:'custom',customType:'tool_execution_start',data:{toolCallId:'two',toolName:'read',startedAt}});
+ assert.deepEqual(JSON.parse(JSON.stringify(s.statusEvidence)),{kind:'tool_call',at:startedAt});
+});
+
 test('OMP: metadata, real ID, lineage and model changes',()=>{
  const s=apply(session(),entry('title',{title:'Текущее имя'}),entry('session',{id:'real-id',cwd:'C:\\Проект с пробелом',title:'Старое имя',parentSession:'ancestor'}),entry('model_change',{model:'openai/main'}),entry('model_change',{role:'smol',model:'openai/small'}));
  assert.equal(s.id,'real-id');assert.equal(s.sessionId,'real-id');assert.equal(s.title,'Текущее имя');

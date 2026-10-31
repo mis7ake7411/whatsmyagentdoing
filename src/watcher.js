@@ -16,6 +16,7 @@ const { clientFiles, metadata, applyKimi, applyDsh, applyGrok, readDsh } = requi
 const { ompDirs } = require('./omp');
 const hook = require('./hook');
 const { transcript } = require('./transcript');
+const { SOURCE_STATES, SOURCE_REASONS, errorReason, safeSourceHealth } = require('./diagnostics');
 
 const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 768 * 1024;
@@ -23,6 +24,7 @@ const TAIL_BYTES = 768 * 1024;
 const OMP_FULL_BYTES = 32 * 1024 * 1024;
 // DSH logs are decoded and replayed whole, so a busy log is re-read at most this often.
 const DSH_REPLAY_MS = 5000;
+const LOCAL_AGENTS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp'];
 
 const home = os.homedir();
 const CLAUDE_DIR = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects');
@@ -43,19 +45,26 @@ const CLIENT_DIRS = {
   grok: path.join(process.env.GROK_HOME || path.join(home, '.grok'), 'sessions'),
 };
 
-function ls(dir) {
-  try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+function ls(dir, onDirectory) {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    onDirectory?.(dir, null);
+    return entries;
+  } catch (error) {
+    onDirectory?.(dir, error);
+    return [];
+  }
 }
 
-function statSafe(f) {
-  try { return fs.statSync(f); } catch { return null; }
+function statSafe(f, onError) {
+  try { return fs.statSync(f); } catch (error) { onError?.(f, error); return null; }
 }
 
 function readRange(file, start, end, decoder) {
   const len = Math.max(0, end - start);
-  if (!len) return '';
   const fd = fs.openSync(file, 'r');
   try {
+    if (!len) return '';
     const buf = Buffer.alloc(len);
     fs.readSync(fd, buf, 0, len, start);
     return decoder ? decoder.write(buf) : buf.toString('utf8');
@@ -64,19 +73,30 @@ function readRange(file, start, end, decoder) {
   }
 }
 
-function claudeFiles() {
+function statSignature(stat) {
+  return { mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, ino: stat.ino, size: stat.size };
+}
+
+function matchesStatSignature(signature, stat) {
+  return signature && signature.mtimeMs === stat.mtimeMs && signature.ctimeMs === stat.ctimeMs
+    && signature.ino === stat.ino && signature.size === stat.size;
+}
+
+function claudeFiles(onDirectory, sinceMs = -Infinity) {
   const out = [];
-  for (const proj of ls(CLAUDE_DIR)) {
+  for (const proj of ls(CLAUDE_DIR, onDirectory)) {
     if (!proj.isDirectory()) continue;
     const pdir = path.join(CLAUDE_DIR, proj.name);
-    for (const e of ls(pdir)) {
+    for (const e of ls(pdir, onDirectory)) {
       if (e.isFile() && e.name.endsWith('.jsonl')) {
-        out.push({ agent: 'claude', file: path.join(pdir, e.name), id: e.name.slice(0, -6) });
+        const file = path.join(pdir, e.name), st = statSafe(file, onDirectory);
+        if (st && st.mtimeMs >= sinceMs) out.push({ agent: 'claude', file, id: e.name.slice(0, -6) });
       } else if (e.isDirectory()) {
         const sub = path.join(pdir, e.name, 'subagents');
-        for (const s of ls(sub)) {
+        for (const s of ls(sub, onDirectory)) {
           if (s.isFile() && s.name.endsWith('.jsonl')) {
-            out.push({ agent: 'claude', file: path.join(sub, s.name), id: s.name.slice(0, -6), parentId: e.name });
+            const file = path.join(sub, s.name), st = statSafe(file, onDirectory);
+            if (st && st.mtimeMs >= sinceMs) out.push({ agent: 'claude', file, id: s.name.slice(0, -6), parentId: e.name });
           }
         }
       }
@@ -85,22 +105,24 @@ function claudeFiles() {
   return out;
 }
 
-function geminiFiles() {
+function geminiFiles(onDirectory, sinceMs = -Infinity) {
   // <root>/tmp/<project>/chats/session-*.jsonl (+ legacy .json), and
   // subagents in <root>/tmp/<project>/chats/<parentSessionId>/<id>.jsonl
   const out = [];
   for (const root of GEMINI_HOMES) {
     const tmp = path.join(root, 'tmp');
-    for (const proj of ls(tmp)) {
+    for (const proj of ls(tmp, onDirectory)) {
       if (!proj.isDirectory()) continue;
       const chats = path.join(tmp, proj.name, 'chats');
-      for (const e of ls(chats)) {
+      for (const e of ls(chats, onDirectory)) {
         if (e.isFile() && /^session-.*\.jsonl?$/.test(e.name)) {
-          out.push({ agent: 'gemini', file: path.join(chats, e.name), id: e.name.replace(/\.jsonl?$/, ''), project: proj.name, root });
+          const file = path.join(chats, e.name), st = statSafe(file, onDirectory);
+          if (st && st.mtimeMs >= sinceMs) out.push({ agent: 'gemini', file, id: e.name.replace(/\.jsonl?$/, ''), project: proj.name, root });
         } else if (e.isDirectory()) {
-          for (const f of ls(path.join(chats, e.name))) {
+          for (const f of ls(path.join(chats, e.name), onDirectory)) {
             if (f.isFile() && /\.jsonl$/.test(f.name)) {
-              out.push({ agent: 'gemini', file: path.join(chats, e.name, f.name), id: f.name.slice(0, -6), project: proj.name, root, parentId: e.name });
+              const file = path.join(chats, e.name, f.name), st = statSafe(file, onDirectory);
+              if (st && st.mtimeMs >= sinceMs) out.push({ agent: 'gemini', file, id: f.name.slice(0, -6), project: proj.name, root, parentId: e.name });
             }
           }
         }
@@ -110,23 +132,23 @@ function geminiFiles() {
   return out;
 }
 
-function codexFiles(sinceMs) {
+function codexFiles(sinceMs, onDirectory) {
   // Date folders record when a chat began, not when it was last used. Walk
   // every date so a months-old chat can be discovered when it resumes.
   // Check mtime here to keep inactive history out of the 1s polling list;
   // only the 5s discovery scan stats those files, without reading their logs.
   const out = [];
-  for (const y of ls(CODEX_DIR)) {
+  for (const y of ls(CODEX_DIR, onDirectory)) {
     if (!y.isDirectory()) continue;
-    for (const m of ls(path.join(CODEX_DIR, y.name))) {
+    for (const m of ls(path.join(CODEX_DIR, y.name), onDirectory)) {
       if (!m.isDirectory()) continue;
-      for (const d of ls(path.join(CODEX_DIR, y.name, m.name))) {
+      for (const d of ls(path.join(CODEX_DIR, y.name, m.name), onDirectory)) {
         if (!d.isDirectory()) continue;
         const dir = path.join(CODEX_DIR, y.name, m.name, d.name);
-        for (const f of ls(dir)) {
+        for (const f of ls(dir, onDirectory)) {
           if (!f.isFile() || !f.name.endsWith('.jsonl')) continue;
           const file = path.join(dir, f.name);
-          const st = statSafe(file);
+          const st = statSafe(file, onDirectory);
           if (!st || st.mtimeMs < sinceMs) continue;
           const id = (f.name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/) || [])[1] || f.name;
           out.push({ agent: 'codex', file, id });
@@ -137,28 +159,29 @@ function codexFiles(sinceMs) {
   return out;
 }
 
-function copilotFiles() {
+function copilotFiles(onDirectory, sinceMs = -Infinity) {
   const out = [];
-  for (const session of ls(COPILOT_DIR)) {
+  for (const session of ls(COPILOT_DIR, onDirectory)) {
     if (!session.isDirectory()) continue;
     const events = path.join(COPILOT_DIR, session.name, 'events.jsonl');
-    if (statSafe(events)) out.push({ agent: 'copilot', file: events, id: session.name });
+    const st = statSafe(events, onDirectory);
+    if (st && st.mtimeMs >= sinceMs) out.push({ agent: 'copilot', file: events, id: session.name });
   }
   return out;
 }
 
-function ompFiles(sinceMs, roots) {
+function ompFiles(sinceMs, roots, onDirectory) {
   const out = [], seen = new Set();
   const add = (dir, profile, parentFile = null, depth = 0) => {
     if (depth > 20) return;
-    const entries = ls(dir);
+    const entries = ls(dir, onDirectory);
     // OMP keeps each agent's children in a directory named after its own log.
     // Dirents don't follow symlinks, so a linked directory is never walked.
     const dirs = new Set(entries.filter((e) => e.isDirectory()).map((e) => e.name));
     for (const e of entries) {
       if (!e.isFile() || !e.name.endsWith('.jsonl') || e.name.includes('.bak')) continue;
       if (!parentFile && e.name.startsWith('__advisor')) continue;
-      const file = path.join(dir, e.name), st = statSafe(file);
+      const file = path.join(dir, e.name), st = statSafe(file, onDirectory);
       if (!st) continue;
       const fresh = st.mtimeMs >= sinceMs;
       if (fresh && !seen.has(file)) {
@@ -170,18 +193,67 @@ function ompFiles(sinceMs, roots) {
       const children = path.join(dir, stem);
       // A quiet parent whose child directory gained no entries in the window
       // has no new children, so old history isn't walked on every scan.
-      if (!fresh && (statSafe(children)?.mtimeMs || 0) < sinceMs) continue;
+      if (!fresh && (statSafe(children, onDirectory)?.mtimeMs || 0) < sinceMs) continue;
       add(children, profile, file, depth + 1);
     }
   };
   for (const { dir, profile } of roots) {
     add(dir, profile); // --session-dir may point straight at a log directory
-    for (const e of ls(dir)) {
+    for (const e of ls(dir, onDirectory)) {
       // A root-level log's sibling artifact directory is not a project directory.
-      if (e.isDirectory() && !statSafe(path.join(dir, e.name + '.jsonl'))) add(path.join(dir, e.name), profile);
+      if (e.isDirectory() && !statSafe(path.join(dir, e.name + '.jsonl'), onDirectory)) add(path.join(dir, e.name), profile);
     }
   }
   return out;
+}
+
+function sourceRoots(ompRoots) {
+  return {
+    claude: [CLAUDE_DIR],
+    codex: [CODEX_DIR],
+    gemini: GEMINI_HOMES.map((root) => path.join(root, 'tmp')),
+    copilot: [COPILOT_DIR],
+    kimi: [CLIENT_DIRS.kimi],
+    dsh: [CLIENT_DIRS.dsh],
+    grok: [CLIENT_DIRS.grok],
+    omp: ompRoots.map((root) => root.dir),
+  };
+}
+
+function pathKey(value) {
+  const resolved = path.resolve(value);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function createSourceScan(roots) {
+  const agents = new Map(LOCAL_AGENTS.map((agent) => [agent, {
+    roots: new Set((roots[agent] || []).map(pathKey)),
+    availableRoots: new Set(),
+    errorReason: null,
+    candidateCount: 0,
+  }]));
+  const observe = (agent, directory, error) => {
+    const source = agents.get(agent);
+    if (!source) return;
+    const key = pathKey(directory);
+    if (!error) {
+      if (source.roots.has(key)) source.availableRoots.add(key);
+      return;
+    }
+    if (['ENOENT', 'ENOTDIR'].includes(error.code)) return;
+    source.errorReason ||= errorReason(error);
+  };
+  const forAgent = (agent) => (directory, error) => observe(agent, directory, error);
+  const forClientPath = (directory, error) => {
+    const key = pathKey(directory);
+    for (const [agent, source] of agents) {
+      if (Array.from(source.roots).some((root) => key === root || key.startsWith(root + path.sep))) {
+        observe(agent, directory, error);
+        return;
+      }
+    }
+  };
+  return { agents, observe, forAgent, forClientPath };
 }
 
 // OMP may record a parent through a symlink (macOS /var, a linked ~/.omp) or,
@@ -210,6 +282,9 @@ class Watcher extends EventEmitter {
     this.codexIndexMtime = 0;
     this.lastScan = 0;
     this.candidates = [];
+    this.sourceScan = createSourceScan(sourceRoots([]));
+    this.sourceLastSuccessAt = new Map(LOCAL_AGENTS.map((agent) => [agent, null]));
+    this.sourceFileErrors = new Map(); // current candidate file -> fixed safe diagnostic
     if (typeof magpieSources === 'string') {
       try { magpieSources = JSON.parse(magpieSources); } catch { throw new Error('WMAD_MAGPIE_SOURCES must be a JSON array of {url, key} objects'); }
     }
@@ -226,6 +301,58 @@ class Watcher extends EventEmitter {
     this.ompDir = ompDir;
     this.ompParentIds = new Map(); // parent log -> { mtime, size, id }
     this.waiting = new Map(); // Claude session ID -> { at, message } from the optional hook
+  }
+
+  recordSourceError(file, agent, state, reason) {
+    if (!SOURCE_STATES.has(state) || !SOURCE_REASONS.has(reason)) return;
+    this.sourceFileErrors.set(file, { agent, state, reason });
+  }
+
+  recordSourceRead(agent, file) {
+    if (!this.sourceLastSuccessAt.has(agent)) return;
+    this.sourceLastSuccessAt.set(agent, Date.now());
+    const previous = this.sourceFileErrors.get(file);
+    if (previous?.state === 'read_error') this.sourceFileErrors.delete(file);
+  }
+
+  finishSourceParse(agent, file, result, allowEmptyRecovery = false) {
+    if (result.reason) {
+      this.recordSourceError(file, agent, 'parse_error', result.reason);
+      return;
+    }
+    if (!result.records && !allowEmptyRecovery) return;
+    const previous = this.sourceFileErrors.get(file);
+    if (previous?.state === 'parse_error') this.sourceFileErrors.delete(file);
+  }
+
+  sourceHealth(agent) {
+    if (!LOCAL_AGENTS.includes(agent)) return null;
+    const source = this.sourceScan.agents.get(agent);
+    let readReason = source?.errorReason || null;
+    let parseReason = null;
+    for (const error of this.sourceFileErrors.values()) {
+      if (error.agent !== agent) continue;
+      if (error.state === 'read_error') readReason ||= error.reason;
+      else if (error.state === 'parse_error') parseReason ||= error.reason;
+    }
+    let state, reason;
+    if (readReason) { state = 'read_error'; reason = readReason; }
+    else if (parseReason) { state = 'parse_error'; reason = parseReason; }
+    else if (source?.candidateCount > 0) { state = 'ok'; reason = null; }
+    else if (source?.availableRoots.size > 0) { state = 'empty'; reason = 'no_recent_logs'; }
+    else { state = 'missing'; reason = 'not_found'; }
+    return safeSourceHealth({ state, lastSuccessAt: this.sourceLastSuccessAt.get(agent), reason });
+  }
+
+  sources() {
+    const out = LOCAL_AGENTS.map((agent) => ({ agent, ...this.sourceHealth(agent) }));
+    if (this.magpies.length) out.push({ agent: 'magpie', state: 'unavailable', lastSuccessAt: null, reason: 'not_instrumented' });
+    return out;
+  }
+
+  sourceHealthFor(session) {
+    if (session?.source === 'magpie') return null;
+    return this.sourceHealth(session?.agent);
   }
 
   start() {
@@ -274,6 +401,7 @@ class Watcher extends EventEmitter {
   tick() {
     const now = Date.now();
     const since = now - this.windowMs;
+    const sourceSignature = JSON.stringify(this.sources());
     let changed = this.loadCodexIndex();
     if (this.loadWaiting(since)) changed = true;
     if (this.loadGeminiProjects()) changed = true;
@@ -281,8 +409,23 @@ class Watcher extends EventEmitter {
     // Directory walk every 5s; stat known files every tick.
     if (now - this.lastScan > 5000) {
       this.lastScan = now;
-      this.candidates = [...claudeFiles(), ...codexFiles(since), ...geminiFiles(), ...copilotFiles(),
-        ...clientFiles(CLIENT_DIRS, since), ...ompFiles(since, ompDirs(this.ompDir, process.env, home, process.platform))];
+      const ompErrors = [];
+      const ompRoots = ompDirs(this.ompDir, process.env, home, process.platform,
+        (directory, error) => ompErrors.push({ directory, error }));
+      const scan = createSourceScan(sourceRoots(ompRoots));
+      for (const item of ompErrors) scan.observe('omp', item.directory, item.error);
+      this.candidates = [...claudeFiles(scan.forAgent('claude'), since), ...codexFiles(since, scan.forAgent('codex')),
+        ...geminiFiles(scan.forAgent('gemini'), since), ...copilotFiles(scan.forAgent('copilot'), since),
+        ...clientFiles(CLIENT_DIRS, since, scan.forClientPath),
+        ...ompFiles(since, ompRoots, scan.forAgent('omp'))];
+      for (const candidate of this.candidates) {
+        const source = scan.agents.get(candidate.agent);
+        if (source) source.candidateCount += 1;
+      }
+      this.sourceScan = scan;
+      const currentFiles = new Set(this.candidates.map((candidate) => candidate.file));
+      for (const file of this.sourceFileErrors.keys()) if (!currentFiles.has(file)) this.sourceFileErrors.delete(file);
+      for (const file of this.failed.keys()) if (!currentFiles.has(file)) this.failed.delete(file);
     }
 
     for (const c of this.candidates) {
@@ -291,6 +434,7 @@ class Watcher extends EventEmitter {
       if ((this.failed.get(c.file) || 0) > now) continue;
       try {
         if (this.track(c, since)) changed = true;
+        this.failed.delete(c.file);
       } catch (e) {
         if (c.agent === 'dsh') {
           // A zstd frame may be half-written. Keep the last readable snapshot.
@@ -302,7 +446,14 @@ class Watcher extends EventEmitter {
           }
         } else {
           this.failed.set(c.file, now + 60000);
-          this.trackers.delete(c.file);
+        }
+        if (e?.partialLog) {
+          // A growing log may not have a complete session header yet.
+        } else if (e?.parseFailed || e?.tooLarge || e?.decodeFailed) {
+          this.recordSourceError(c.file, c.agent, 'parse_error', e?.diagnosticReason
+            || (e?.tooLarge || e?.decodeFailed ? 'decode_failed' : 'parser_failed'));
+        } else {
+          this.recordSourceError(c.file, c.agent, 'read_error', errorReason(e));
         }
       }
     }
@@ -312,16 +463,27 @@ class Watcher extends EventEmitter {
       if (activity < since) { this.trackers.delete(file); changed = true; }
     }
 
+    if (JSON.stringify(this.sources()) !== sourceSignature) changed = true;
     if (changed) this.emit('change');
   }
 
   // Returns true when this file's session changed.
   track(c, since) {
-    const st = statSafe(c.file);
+    const st = statSafe(c.file, (file, error) => {
+      if (!['ENOENT', 'ENOTDIR'].includes(error.code)) {
+        this.recordSourceError(file, c.agent, 'read_error', errorReason(error));
+      }
+    });
     const t = this.trackers.get(c.file);
     if (!st) return c.agent === 'omp' && this.trackers.delete(c.file);
     if (!t) {
       if (st.mtimeMs < since) return false;
+      this.open(c, st);
+      return true;
+    }
+    const sourceError = this.sourceFileErrors.get(c.file);
+    if (sourceError?.state === 'read_error'
+      || (sourceError?.state === 'parse_error' && this.failed.has(c.file))) {
       this.open(c, st);
       return true;
     }
@@ -333,7 +495,10 @@ class Watcher extends EventEmitter {
         return true;
       }
       if (st.size > t.offset) {
-        this.feedOMP(t, c.file, t.offset, st.size);
+        const parseResult = { records: 0, reason: null };
+        this.feedOMP(t, c.file, t.offset, st.size, false, parseResult,
+          () => this.recordSourceRead(c.agent, c.file));
+        this.finishSourceParse(c.agent, c.file, parseResult);
         this.ompTitle(t, c.file, st.size);
         t.offset = st.size;
         t.mtime = t.session.mtime = st.mtimeMs;
@@ -343,18 +508,30 @@ class Watcher extends EventEmitter {
       return false;
     }
     let changed = false;
-    if (t.whole && (st.mtimeMs !== t.mtime || st.size !== t.offset)) {
+    const modified = st.mtimeMs !== t.mtime || st.ctimeMs !== t.ctime || st.ino !== t.ino || st.size !== t.offset;
+    if (t.whole && modified) {
       // Whole documents and compressed streams are replaced only after reading.
       if (c.agent === 'dsh' && Date.now() - t.readAt < DSH_REPLAY_MS) return false;
+      if (matchesStatSignature(t.failedRead, st)) return false;
+      this.open(c, st);
+      return true;
+    } else if (!t.whole && sourceError?.state === 'parse_error' && st.size === t.offset
+      && (st.mtimeMs !== t.mtime || st.ctimeMs !== t.ctime || st.ino !== t.ino)) {
+      // Re-read a same-size rewrite only while recovering a known parse error.
       this.open(c, st);
       return true;
     } else if (st.size > t.offset) {
-      this.feed(t, readRange(c.file, t.offset, st.size, t.decoder), false);
+      const chunk = readRange(c.file, t.offset, st.size, t.decoder);
+      this.recordSourceRead(c.agent, c.file);
+      const parseResult = { records: 0, reason: null };
+      this.feed(t, chunk, false, false, parseResult);
+      this.finishSourceParse(c.agent, c.file, parseResult);
       t.offset = st.size;
       changed = true;
     } else if (st.size < t.offset) {
-      // File was rewritten; start over.
-      this.trackers.delete(c.file);
+      // Read the replacement before dropping the last readable session.
+      this.open(c, st);
+      return true;
     }
     if (c.metadata) {
       const meta = statSafe(c.metadata);
@@ -365,22 +542,35 @@ class Watcher extends EventEmitter {
       }
     }
     t.session.mtime = st.mtimeMs;
+    t.mtime = st.mtimeMs; t.ctime = st.ctimeMs; t.ino = st.ino;
     return changed;
   }
 
   open(c, st) {
+    const previous = this.trackers.get(c.file);
     const session = newSession(c.agent, c.id, c.file);
     if (c.sessionId) session.sessionId = c.sessionId;
     if (c.parentId) { session.parentId = c.parentId; session.subagent = true; }
     session.mtime = st.mtimeMs;
     if (c.agent === 'gemini') session.geminiProject = c.project;
     const apply = { claude: applyClaude, codex: applyCodex, gemini: applyGemini, copilot: applyCopilot, kimi: applyKimi, dsh: applyDsh, grok: applyGrok, omp: applyOMP }[c.agent];
-    const t = { session, offset: st.size, partial: '', apply, mtime: st.mtimeMs };
+    const t = { session, offset: st.size, partial: '', apply, mtime: st.mtimeMs,
+      ctime: st.ctimeMs, ino: st.ino, agent: c.agent, file: c.file };
     if (c.agent === 'dsh') {
       t.whole = true;
       t.readAt = Date.now();
-      this.feed(t, readDsh(c.file), false);
-      if (!session._dshHeader) throw new Error('DSH header is not readable yet');
+      const content = readDsh(c.file);
+      this.recordSourceRead(c.agent, c.file);
+      const parseResult = { records: 0, reason: null };
+      this.feed(t, content, false, false, parseResult);
+      this.finishSourceParse(c.agent, c.file, parseResult, true);
+      if (!session._dshHeader) {
+        const error = new Error('DSH header is not readable yet');
+        error.partialLog = !parseResult.reason && parseResult.records === 0 && t.partial.length > 0;
+        error.parseFailed = !error.partialLog;
+        error.diagnosticReason = parseResult.reason || (error.partialLog ? null : 'parser_failed');
+        throw error;
+      }
       for (const [file, old] of this.trackers) {
         if (old.session.agent === 'dsh' && old.session.id === session.id) this.trackers.delete(file);
       }
@@ -397,39 +587,77 @@ class Watcher extends EventEmitter {
       t.decoder = new StringDecoder('utf8');
       t.ctime = st.ctimeMs;
       t.ino = st.ino;
+      const parseResult = { records: 0, reason: null };
+      const onRead = () => this.recordSourceRead(c.agent, c.file);
       // A full chunked replay keeps metadata and every open toolCall; past
       // OMP_FULL_BYTES only calls still open in the tail are seen.
-      if (st.size <= OMP_FULL_BYTES) this.feedOMP(t, c.file, 0, st.size);
+      if (st.size <= OMP_FULL_BYTES) this.feedOMP(t, c.file, 0, st.size, false, parseResult, onRead);
       else {
-        this.feed(t, readRange(c.file, 0, HEAD_BYTES), true);
+        const head = readRange(c.file, 0, HEAD_BYTES);
+        onRead();
+        this.feed(t, head, true, false, parseResult);
         t.partial = '';
-        this.feedOMP(t, c.file, st.size - TAIL_BYTES, st.size, true);
+        this.feedOMP(t, c.file, st.size - TAIL_BYTES, st.size, true, parseResult, onRead);
       }
+      onRead();
+      this.finishSourceParse(c.agent, c.file, parseResult, true);
       this.ompTitle(t, c.file, st.size);
       this.trackers.set(c.file, t);
       return t;
     }
     if (c.agent === 'gemini' && c.file.endsWith('.json')) {
       t.whole = true;
-      try { applyGeminiDocument(session, JSON.parse(readRange(c.file, 0, st.size))); } catch {}
+      const content = readRange(c.file, 0, st.size);
+      this.recordSourceRead(c.agent, c.file);
+      let document;
+      try { document = JSON.parse(content); }
+      catch {
+        this.recordSourceError(c.file, c.agent, 'parse_error', 'invalid_json');
+        if (previous) {
+          previous.failedRead = statSignature(st);
+          return previous;
+        }
+        this.trackers.set(c.file, t);
+        return t;
+      }
+      let parseReason = null;
+      try { applyGeminiDocument(session, document); }
+      catch { parseReason = 'parser_failed'; }
+      if (parseReason && previous) {
+        this.recordSourceError(c.file, c.agent, 'parse_error', parseReason);
+        previous.failedRead = statSignature(st);
+        return previous;
+      }
+      this.finishSourceParse(c.agent, c.file, { records: 1, reason: parseReason }, true);
       this.trackers.set(c.file, t);
       return t;
     }
     // Keep a decoder for later Kimi/Grok appends that split a UTF-8 character.
     if (c.agent === 'kimi' || c.agent === 'grok') t.decoder = new StringDecoder('utf8');
+    const parseResult = { records: 0, reason: null };
     if (t.decoder && st.size <= OMP_FULL_BYTES) {
       // Pending tools and approvals need every event, including the middle.
       for (let start = 0; start < st.size; start += TAIL_BYTES) {
-        this.feed(t, readRange(c.file, start, Math.min(start + TAIL_BYTES, st.size), t.decoder), false);
+        const chunk = readRange(c.file, start, Math.min(start + TAIL_BYTES, st.size), t.decoder);
+        this.recordSourceRead(c.agent, c.file);
+        this.feed(t, chunk, false, false, parseResult);
       }
     } else if (st.size <= HEAD_BYTES + TAIL_BYTES) {
-      this.feed(t, readRange(c.file, 0, st.size), false);
+      const chunk = readRange(c.file, 0, st.size);
+      this.recordSourceRead(c.agent, c.file);
+      this.feed(t, chunk, false, false, parseResult);
     } else {
       // Big log: head for metadata (cwd, title, model), tail for current state.
-      this.feed(t, readRange(c.file, 0, HEAD_BYTES), true);
+      const head = readRange(c.file, 0, HEAD_BYTES);
+      this.recordSourceRead(c.agent, c.file);
+      this.feed(t, head, true, false, parseResult);
       t.partial = '';
-      this.feed(t, readRange(c.file, st.size - TAIL_BYTES, st.size, t.decoder), false, true);
+      const tail = readRange(c.file, st.size - TAIL_BYTES, st.size, t.decoder);
+      this.recordSourceRead(c.agent, c.file);
+      this.feed(t, tail, false, true, parseResult);
     }
+    if (!st.size) this.recordSourceRead(c.agent, c.file);
+    this.finishSourceParse(c.agent, c.file, parseResult, true);
     if (c.metadata) {
       metadata(session, c.agent, c.metadata);
       const meta = statSafe(c.metadata);
@@ -439,13 +667,15 @@ class Watcher extends EventEmitter {
     return t;
   }
 
-  feedOMP(t, file, start, end, skipFirstLine = false) {
+  feedOMP(t, file, start, end, skipFirstLine = false, parseResult = { records: 0, reason: null }, onRead = null) {
     const fd = fs.openSync(file, 'r');
+    let read = false;
     try {
       const buf = Buffer.alloc(128 * 1024);
       while (start < end) {
         const n = fs.readSync(fd, buf, 0, Math.min(buf.length, end - start), start);
         if (!n) break;
+        if (!read) { onRead?.(); read = true; }
         let text = t.decoder.write(buf.subarray(0, n));
         if (skipFirstLine) {
           // a tail read starts mid-line: drop everything up to the first newline
@@ -453,10 +683,11 @@ class Watcher extends EventEmitter {
           text = nl < 0 ? '' : text.slice(nl + 1);
           if (nl >= 0) skipFirstLine = false;
         }
-        this.feed(t, text, false);
+        this.feed(t, text, false, false, parseResult);
         start += n;
       }
     } finally { fs.closeSync(fd); }
+    if (!read) onRead?.();
   }
 
   ompTitle(t, file, size) {
@@ -467,7 +698,7 @@ class Watcher extends EventEmitter {
     } catch {}
   }
 
-  feed(t, chunk, dropLastPartial, dropFirst = false) {
+  feed(t, chunk, dropLastPartial, dropFirst = false, parseResult = { records: 0, reason: null }) {
     const lines = (t.partial + chunk).split('\n');
     t.partial = lines.pop();
     if (dropFirst) lines.shift();
@@ -475,9 +706,13 @@ class Watcher extends EventEmitter {
     for (const line of lines) {
       if (!line) continue;
       let d;
-      try { d = JSON.parse(line); } catch { continue; }
-      try { t.apply(t.session, d); } catch {}
+      try { d = JSON.parse(line); }
+      catch { parseResult.reason ||= 'invalid_json'; continue; }
+      parseResult.records += 1;
+      try { t.apply(t.session, d); }
+      catch { parseResult.reason ||= 'parser_failed'; }
     }
+    return parseResult;
   }
 
   // The parent's session ID, from its tracker or (when it is outside the
@@ -548,7 +783,8 @@ class Watcher extends EventEmitter {
       // A permission prompt from the optional Claude Code hook, until the log moves on.
       const wait = s.agent === 'claude' && !s.subagent && this.waiting.get(s.id);
       if (wait && wait.at > (s.lastEventAt || 0)) {
-        out.push({ ...s, status: 'waiting', activity: wait.message || null, lastEventAt: wait.at });
+        out.push({ ...s, status: 'waiting', activity: wait.message || null, lastEventAt: wait.at,
+          statusEvidence: { kind: 'permission_hook', at: Number.isFinite(wait.at) ? wait.at : null } });
         continue;
       }
       out.push(s);

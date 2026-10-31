@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { newSession, applyCodex, applyClaude, applyGemini } = require('../src/parsers');
+const { newSession, applyCodex, applyClaude, applyGemini, applyGeminiDocument } = require('../src/parsers');
 const { snapshot } = require('../src/server');
 
 const OPTIONS = { demo: true, privacy: false };
@@ -55,6 +55,44 @@ test('new sessions start unknown and snapshot exposes freshness and pending fiel
   assert.equal(out.quietMs, null);
   assert.equal(out.stale, false);
   assert.equal(out.staleAfterMs, 600_000);
+});
+
+test('status evidence follows each real status assignment and keeps the event timestamp', () => {
+  const s = session();
+  const metadataAt = BASE_TIME + 60_000;
+  codex(s, 'session_meta', { cwd: '/private/project' }, new Date(metadataAt).toISOString());
+  assert.equal(s.statusEvidence, null, 'metadata timestamps do not establish status evidence');
+
+  const firstAt = BASE_TIME + 1_000;
+  codex(s, 'event_msg', { type: 'task_started' }, new Date(firstAt).toISOString());
+  assert.deepEqual(s.statusEvidence, { kind: 'turn_started', at: firstAt });
+
+  const repeatedAt = firstAt + 5_000;
+  codex(s, 'event_msg', { type: 'task_started' }, new Date(repeatedAt).toISOString());
+  assert.deepEqual(s.statusEvidence, { kind: 'turn_started', at: repeatedAt }, 'a repeated same-status event refreshes evidence');
+  assert.equal(viewed(s).statusEvidence.at, repeatedAt);
+  assert.equal(JSON.stringify(viewed(s).statusEvidence).includes('/private/project'), false, 'status evidence does not expose paths');
+
+  const waiting = session();
+  const askedAt = BASE_TIME + 9_000;
+  codex(waiting, 'event_msg', { type: 'request_user_input', call_id: 'question-1', arguments: { question: 'Continue?' } }, new Date(askedAt).toISOString());
+  assert.deepEqual(waiting.statusEvidence, { kind: 'question_request', at: askedAt });
+  assert.equal(waiting.pendingRequests.length, 1, 'evidence does not clear the real pending request');
+});
+
+test('Gemini document status evidence uses the nested message time instead of document metadata', () => {
+  const s = session('gemini');
+  const messageAt = BASE_TIME + 2_000;
+  const metadataAt = messageAt + 60_000;
+  applyGeminiDocument(s, {
+    startTime: new Date(metadataAt).toISOString(),
+    messages: [{ type: 'user', timestamp: new Date(messageAt).toISOString(), content: 'Read the file' }],
+  });
+  assert.deepEqual(s.statusEvidence, { kind: 'user_message', at: messageAt });
+
+  const noTime = session('gemini');
+  applyGemini(noTime, { type: 'user', content: 'No timestamp available' });
+  assert.deepEqual(noTime.statusEvidence, { kind: 'user_message', at: null }, 'missing event time is not fabricated');
 });
 
 test('silence marks nonterminal status stale without changing the observed status', () => {

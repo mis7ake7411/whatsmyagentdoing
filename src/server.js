@@ -20,6 +20,7 @@ const scenes = require('./scenes');
 const updater = require('./update');
 const { ompResumeCommand } = require('./omp');
 const { dayKey } = require('./parsers');
+const { safeStatusEvidence, safeSourceHealth, SOURCE_STATES, SOURCE_REASONS } = require('./diagnostics');
 
 function serveFile(res, root, rel) {
   const file = path.normalize(path.join(root, rel));
@@ -67,9 +68,10 @@ function serveStream(res, file, headers) {
 }
 const ACTIVE = new Set(['thinking', 'tool', 'typing']);
 const STALE_AFTER_MS = 600_000;
+const SOURCE_AGENTS = new Set(['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp', 'magpie']);
 
 // Keep the last observed status and report silence separately as freshness.
-function view(s, now, { privacy }) {
+function view(s, now, { privacy }, sourceHealth = null) {
   const lastEventAt = s.lastEventAt ?? s.mtime ?? null;
   const quiet = Number.isFinite(lastEventAt) ? Math.max(0, now - lastEventAt) : null;
   const status = s.status;
@@ -111,6 +113,8 @@ function view(s, now, { privacy }) {
     turnStartedAt: s.turnStartedAt,
     lastEventAt,
     startedAt: s.startedAt,
+    statusEvidence: safeStatusEvidence(s.statusEvidence),
+    sourceHealth: safeSourceHealth(sourceHealth),
   };
   if (s.agent === 'omp' && s.source !== 'magpie') {
     out.ompProfile = s.ompProfile || null;
@@ -154,9 +158,20 @@ function summary(sessions, now) {
 function snapshot(watcher, opts) {
   const now = Date.now();
   const raw = watcher.sessions();
-  const sessions = raw.map((s) => view(s, now, opts));
+  const sessions = raw.map((s) => view(s, now, opts, watcher.sourceHealthFor?.(s) || null));
   sessions.sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
-  return { now, lang: opts.demo ? null : promptLanguage(raw), sessions, summary: summary(sessions, now) };
+  const sources = (typeof watcher.sources === 'function' ? watcher.sources() : [])
+    .filter((source) => SOURCE_AGENTS.has(source?.agent) && SOURCE_STATES.has(source.state))
+    .map((source) => {
+      const health = safeSourceHealth(source);
+      return {
+        agent: source.agent,
+        state: health.state,
+        lastSuccessAt: health.lastSuccessAt,
+        reason: health.reason && SOURCE_REASONS.has(health.reason) ? health.reason : null,
+      };
+    });
+  return { now, lang: opts.demo ? null : promptLanguage(raw), sessions, summary: summary(sessions, now), sources };
 }
 
 function createServer(watcher, opts, { onShutdown, onRestart } = {}) {

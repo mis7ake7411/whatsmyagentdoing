@@ -389,6 +389,71 @@ test('error notifications require granted permission and stay suppressed in PiP 
   assert.equal(subagent.notifications.length, 0);
 });
 
+test('source diagnostics distinguish an absent source from an empty window and hide raw reasons', () => {
+  const p = page();
+  p.context.data = {
+    now: p.now(),
+    sessions: [],
+    sources: [
+      { agent: 'codex', state: 'missing', lastSuccessAt: null, reason: 'not_found', path: 'C:\\private\\agent-log.jsonl' },
+      { agent: 'claude', state: 'empty', lastSuccessAt: p.now() - 60_000, reason: 'no_recent_logs' },
+      { agent: 'gemini', state: 'read_error', lastSuccessAt: null, reason: 'reading_denied' },
+      { agent: 'omp', state: 'parse_error', lastSuccessAt: p.now() - 20_000, reason: 'invalid_json' },
+      { agent: 'dsh', state: 'unavailable', lastSuccessAt: null, reason: 'not_instrumented' },
+      { agent: 'grok', state: 'read_error', lastSuccessAt: null, reason: 'C:\\private\\secret error text' },
+    ],
+  };
+  p.run('onData(data)');
+  const html = p.elements.get('sourcesPanel')?.innerHTML || '';
+  assert.match(html, /Not installed or source path not found/);
+  assert.match(html, /No logs in the selected time range/);
+  assert.match(html, /Read access was denied/);
+  assert.match(html, /Could not parse the log source/);
+  assert.match(html, /Unavailable/);
+  assert.doesNotMatch(html, /C:\\private|reading_denied|invalid_json|not_instrumented/);
+
+  const legacy = page();
+  sendSnapshot(legacy, []);
+  assert.match(legacy.elements.get('sourcesPanel')?.innerHTML || '', /Source diagnostics are unavailable/);
+});
+
+test('session evidence uses allowlisted event kinds and their own timestamps', () => {
+  const p = page();
+  assert.equal(p.run('typeof sessionEvidenceHtml'), 'function');
+  const eventAt = p.now() - 30 * 60 * 1000;
+  const readAt = p.now() - 90 * 60 * 1000;
+  const legacyAt = p.now() - 24 * 60 * 60 * 1000;
+  const fixture = {
+    lastEventAt: legacyAt,
+    statusEvidence: { kind: 'assistant_message', at: eventAt },
+    sourceHealth: { state: 'ok', lastSuccessAt: readAt, reason: null },
+  };
+  const html = p.run(`sessionEvidenceHtml(${JSON.stringify(fixture)})`);
+  const formatAt = (value) => new Intl.DateTimeFormat('en', { dateStyle: 'medium', timeStyle: 'short' }).format(value);
+  assert.match(html, /Assistant message/);
+  assert.ok(html.includes(formatAt(eventAt)), 'the state event shows its original event time');
+  assert.ok(html.includes(formatAt(readAt)), 'source health shows the successful content-read time');
+  assert.ok(!html.includes(formatAt(legacyAt)), 'lastEventAt does not replace either evidence timestamp');
+
+  const absent = p.run('sessionEvidenceHtml({})');
+  assert.match(absent, /No state-event evidence available/);
+  assert.match(absent, /Source health unavailable/);
+  const unknownKind = p.run(`sessionEvidenceHtml({statusEvidence:{kind:'private raw log text',at:${eventAt}}})`);
+  assert.doesNotMatch(unknownKind, /private raw log text/);
+  assert.match(unknownKind, /Event type unavailable/);
+});
+
+test('source and evidence labels are localized in English and Traditional Chinese with English fallback', () => {
+  const p = page();
+  assert.equal(p.run('I18N.en.logSources'), 'Log sources');
+  assert.equal(p.run('I18N["zh-TW"].logSources'), '記錄來源');
+  assert.equal(p.run('I18N.en.sourceStateMissing'), 'Not installed or source path not found');
+  assert.equal(p.run('I18N["zh-TW"].sourceStateMissing'), '未安裝或找不到來源路徑');
+  assert.equal(p.run('I18N.en.evidenceKindAssistantMessage'), 'Assistant message');
+  assert.equal(p.run('I18N["zh-TW"].evidenceKindAssistantMessage'), '助理訊息');
+  assert.equal(p.run('I18N.es.logSources'), 'Log sources');
+});
+
 test('error and notification labels are localized in English and Traditional Chinese with English fallback', () => {
   const p = page();
   assert.equal(p.run('I18N.en.errorNote("Sample")'), 'Sample: Error');

@@ -5,6 +5,7 @@ const path = require('path');
 const zlib = require('zlib');
 const { execFileSync } = require('child_process');
 const { clean } = require('./parsers');
+const { withStatusEvidence, recordStatusEvidence } = require('./diagnostics');
 
 // Some Node releases expose zstd but silently decode only the first frame.
 const nativeZstd = (() => {
@@ -15,20 +16,27 @@ const nativeZstd = (() => {
   } catch { return false; }
 })();
 
-function entries(dir) {
-  try { return fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+function entries(dir, onDirectory) {
+  try {
+    const result = fs.readdirSync(dir, { withFileTypes: true });
+    onDirectory?.(dir, null);
+    return result;
+  } catch (error) {
+    onDirectory?.(dir, error);
+    return [];
+  }
 }
 
 // All three clients store sessions one directory below a project directory.
-function clientFiles(roots, since) {
+function clientFiles(roots, since, onDirectory) {
   const out = [];
   for (const [agent, root] of Object.entries(roots)) {
-    for (const project of entries(root).filter((e) => e.isDirectory())) {
+    for (const project of entries(root, onDirectory).filter((e) => e.isDirectory())) {
       const dir = path.join(root, project.name);
-      for (const session of entries(dir).filter((e) => e.isDirectory())) {
+      for (const session of entries(dir, onDirectory).filter((e) => e.isDirectory())) {
         const base = path.join(dir, session.name);
         if (agent === 'kimi') {
-          for (const child of entries(path.join(base, 'agents')).filter((e) => e.isDirectory())) {
+          for (const child of entries(path.join(base, 'agents'), onDirectory).filter((e) => e.isDirectory())) {
             out.push({ agent, id: child.name === 'main' ? session.name : `${session.name}/${child.name}`,
               file: path.join(base, 'agents', child.name, 'wire.jsonl'), metadata: path.join(base, 'state.json'),
               sessionId: session.name, parentId: child.name === 'main' ? null : session.name });
@@ -37,7 +45,7 @@ function clientFiles(roots, since) {
           out.push({ agent, id: session.name, file: path.join(base, 'updates.jsonl'), metadata: path.join(base, 'summary.json') });
         } else {
           let latest;
-          for (const e of entries(base)) {
+          for (const e of entries(base, onDirectory)) {
             const match = e.isFile() && e.name.match(/^session(?:\.v(\d+))?\.jsonl(\.zstd)?$/);
             if (!match) continue;
             try {
@@ -45,7 +53,7 @@ function clientFiles(roots, since) {
               if (!latest || version > latest.version || (version === latest.version && st.mtimeMs > latest.mtime)) {
                 latest = { agent, id: session.name, file, version, mtime: st.mtimeMs };
               }
-            } catch {}
+            } catch (error) { onDirectory?.(path.join(base, e.name), error); }
           }
           if (latest) out.push(latest);
         }
@@ -53,7 +61,10 @@ function clientFiles(roots, since) {
     }
   }
   return out.filter((c) => {
-    try { return fs.statSync(c.file).mtimeMs >= since; } catch { return false; }
+    try {
+      const stat = fs.statSync(c.file);
+      return stat.mtimeMs >= since && (c.agent !== 'dsh' || stat.size > 0);
+    } catch (error) { onDirectory?.(c.file, error); return false; }
   });
 }
 
@@ -97,6 +108,7 @@ function text(parts) {
 function state(s, status, activity = null) {
   s.status = status; s.activity = activity;
   if (status !== 'error') s.error = null;
+  recordStatusEvidence(s);
 }
 
 function begin(s, ts) {
@@ -270,8 +282,27 @@ function readDsh(file) {
     return execFileSync('zstd', ['-dc', '--', file], { encoding: 'utf8', maxBuffer: limit, timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     if (e.code === 'ENOBUFS' || e.code === 'ERR_BUFFER_TOO_LARGE') throw tooLarge();
+    if (!['EACCES', 'EPERM'].includes(e.code)) e.decodeFailed = true;
     throw e;
   }
 }
 
-module.exports = { clientFiles, metadata, applyKimi, applyDsh, applyGrok, readDsh };
+function applyKimiWithEvidence(s, d) {
+  return withStatusEvidence(s, 'kimi', d, () => applyKimi(s, d));
+}
+
+function applyDshWithEvidence(s, d) {
+  return withStatusEvidence(s, 'dsh', d, () => applyDsh(s, d));
+}
+
+function applyGrokWithEvidence(s, d) {
+  return withStatusEvidence(s, 'grok', d, () => applyGrok(s, d));
+}
+
+module.exports = {
+  clientFiles, metadata,
+  applyKimi: applyKimiWithEvidence,
+  applyDsh: applyDshWithEvidence,
+  applyGrok: applyGrokWithEvidence,
+  readDsh,
+};
