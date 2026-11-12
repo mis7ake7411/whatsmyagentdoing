@@ -7,6 +7,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { snapshot } = require('../src/server');
+let sqlite = null;
+try { sqlite = require('node:sqlite'); } catch {}
 
 const watcherPath = path.join(__dirname, '../src/watcher.js');
 const localRequire = createRequire(watcherPath);
@@ -163,7 +165,8 @@ test('source snapshots distinguish absent roots from empty sources and keep actu
   const f = fixture(t);
   f.watcher.tick();
   let out = snapshot(f.watcher, { demo: true, privacy: false });
-  assert.equal(out.sources.length, 9);
+  assert.deepEqual(Array.from(out.sources.filter(source => source.state !== 'unavailable'), source => source.agent),
+    ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp', 'antigravity', 'pi']);
   assert.equal(out.sources.find(source => source.agent === 'codex').state, 'missing');
 
   fs.mkdirSync(path.join(f.root, '.codex/sessions'), { recursive: true });
@@ -184,6 +187,95 @@ test('source snapshots distinguish absent roots from empty sources and keep actu
   assert.equal(out.sources.find(source => source.agent === 'codex').lastSuccessAt, firstRead, 'unchanged polling does not count as a read');
   assert.equal(out.sessions[0].sourceHealth.state, 'ok');
   assert.equal(JSON.stringify(out).includes(log.file), false, 'serialized diagnostics never include log paths');
+});
+
+test('Pi and database sources report only instrumented health states', t => {
+  const f = fixture(t);
+  f.watcher.tick();
+  let sources = snapshot(f.watcher, { demo: true, privacy: false }).sources;
+  assert.deepEqual(sources.find(source => source.agent === 'pi'), {
+    agent: 'pi', state: 'missing', lastSuccessAt: null, reason: 'not_found',
+  });
+  for (const agent of ['opencode', 'hermes']) {
+    assert.deepEqual(sources.find(source => source.agent === agent), {
+      agent, state: 'unavailable', lastSuccessAt: null, reason: 'not_instrumented',
+    });
+    assert.deepEqual(f.watcher.sourceHealthFor({ agent }), {
+      state: 'unavailable', lastSuccessAt: null, reason: 'not_instrumented',
+    });
+  }
+
+  const piRoot = path.join(f.root, '.pi/agent/sessions');
+  fs.mkdirSync(piRoot, { recursive: true });
+  f.advance(6000);
+  f.watcher.tick();
+  sources = snapshot(f.watcher, { demo: true, privacy: false }).sources;
+  assert.deepEqual(sources.find(source => source.agent === 'pi'), {
+    agent: 'pi', state: 'empty', lastSuccessAt: null, reason: 'no_recent_logs',
+  });
+
+  const piFile = path.join(piRoot, '--work-pi--', '2026-10-26T10-00-06_pi-health.jsonl');
+  fs.mkdirSync(path.dirname(piFile), { recursive: true });
+  fs.writeFileSync(piFile, [
+    JSON.stringify({ type: 'session', version: 3, id: 'pi-health', timestamp: new Date(NOW).toISOString(), cwd: '/work/pi' }),
+    JSON.stringify({ type: 'message', id: 'user', parentId: null, timestamp: new Date(NOW + 6000).toISOString(),
+      message: { role: 'user', content: 'Inspect the project', timestamp: NOW + 6000 } }),
+    '',
+  ].join('\n'));
+  fs.utimesSync(piFile, new Date(NOW + 6000), new Date(NOW + 6000));
+  f.advance(6000);
+  f.watcher.tick();
+  const out = snapshot(f.watcher, { demo: true, privacy: false });
+  const pi = out.sources.find(source => source.agent === 'pi');
+  assert.equal(pi.state, 'ok');
+  assert.equal(pi.lastSuccessAt, NOW + 12000);
+  assert.equal(out.sessions.find(session => session.agent === 'pi').sourceHealth.state, 'ok');
+});
+
+test('watcher merges Hermes database updates and keeps file sessions when the database breaks', {
+  skip: !sqlite && 'node:sqlite is unavailable',
+}, t => {
+  const f = fixture(t);
+  const local = f.write('2026/10/26', 920, NOW - HOUR);
+  const dbFile = path.join(f.root, '.hermes/state.db');
+  fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+  const db = new sqlite.DatabaseSync(dbFile);
+  db.exec(`create table sessions (id text, model text, parent_session_id text, started_at real, ended_at real);
+    create table messages (session_id text, role text, content text, timestamp real, finish_reason text, tool_name text);`);
+  const id = '20261026_100000_health';
+  db.prepare('insert into sessions values (?, ?, ?, ?, ?)').run(id, 'swift-1.5', null, NOW / 1000, null);
+  const insertMessage = db.prepare('insert into messages values (?, ?, ?, ?, ?, ?)');
+  insertMessage.run(id, 'user', 'Check the integration', NOW / 1000, null, null);
+  db.close();
+
+  let changes = 0;
+  f.watcher.on('change', () => { changes += 1; });
+  f.watcher.tick();
+  let out = snapshot(f.watcher, { demo: true, privacy: false });
+  assert.ok(out.sessions.some(session => session.id === local.id && session.agent === 'codex'));
+  assert.equal(out.sessions.find(session => session.agent === 'hermes').status, 'thinking');
+  assert.equal(out.sessions.find(session => session.agent === 'hermes').sourceHealth.state, 'unavailable');
+  const initialChanges = changes;
+
+  f.advance(6000);
+  const update = new sqlite.DatabaseSync(dbFile);
+  update.prepare('insert into messages values (?, ?, ?, ?, ?, ?)')
+    .run(id, 'assistant', 'Complete', (NOW + 6000) / 1000, 'stop', null);
+  update.close();
+  f.watcher.tick();
+  out = snapshot(f.watcher, { demo: true, privacy: false });
+  assert.equal(out.sessions.find(session => session.agent === 'hermes').status, 'done');
+  assert.ok(changes > initialChanges, 'a database status update emits a watcher change');
+  const updatedChanges = changes;
+
+  fs.writeFileSync(dbFile, 'not a SQLite database');
+  f.advance(6000);
+  f.watcher.tick();
+  out = snapshot(f.watcher, { demo: true, privacy: false });
+  assert.ok(changes > updatedChanges, 'dropping the broken database session emits a watcher change');
+  assert.ok(out.sessions.some(session => session.id === local.id && session.agent === 'codex'));
+  assert.equal(out.sessions.some(session => session.agent === 'hermes'), false);
+  assert.equal(out.sources.find(source => source.agent === 'hermes').state, 'unavailable');
 });
 
 test('Antigravity source health tracks its root and successful transcript reads', t => {
@@ -468,4 +560,21 @@ test('DSH compressed-log failures use a fixed decoding code', t => {
   assert.equal(source.state, 'parse_error');
   assert.equal(source.reason, 'decode_failed');
   assert.equal(JSON.stringify(source).includes(file), false);
+});
+
+test('resumed Claude copies of one conversation show as a single session', t => {
+  const f = fixture(t);
+  const claude = (id, root, at) => {
+    const file = path.join(f.root, '.claude/projects/demo', `${id}.jsonl`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const line = (uuid, parentUuid, ms) => JSON.stringify({ type: 'user', uuid, parentUuid, cwd: '/demo',
+      timestamp: new Date(ms).toISOString(), message: { role: 'user', content: 'hi' } }) + '\n';
+    fs.writeFileSync(file, line(root, null, at - 1000) + line(`${root}-next`, root, at));
+    fs.utimesSync(file, new Date(at), new Date(at));
+  };
+  claude('older-copy', 'root-a', NOW - 2 * HOUR);
+  claude('newest-copy', 'root-a', NOW - HOUR);
+  claude('other-chat', 'root-b', NOW - 3 * HOUR);
+  f.watcher.tick();
+  assert.deepEqual(Array.from(f.watcher.sessions(), s => s.id).sort(), ['newest-copy', 'other-chat']);
 });

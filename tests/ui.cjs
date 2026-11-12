@@ -861,6 +861,34 @@ async function settleOfficeRoster(target, expectedKeys, context, sessions) {
   });
   assert.match(await resumeOf(page,'antigravity:conv-1'),/agy --conversation 'conv-1'/);
   assert.deepEqual(await drawnLogos(page),['antigravity']);
+  const addedClients = ['pi','opencode','hermes'].map(agent=>({
+   key:`${agent}:native`,id:`${agent}-id`,agent,status:'tool',activity:'Read',cwd:`/demo/${agent}`,lastEventAt:Date.now(),
+  }));
+  await page.evaluate(s=>{state.agents=[];onData({now:Date.now(),sessions:s})},addedClients);
+  assert.deepEqual((await rowKeys(page)).sort(),addedClients.map(s=>s.key).sort());
+  for (const agent of ['pi','opencode','hermes']) {
+   await filterAgent(page,agent);
+   assert.deepEqual(await rowKeys(page),[`${agent}:native`]);
+   assert.equal(await page.locator('#agentLegend img').count(),1);
+   assert.equal(await page.locator('#agentLegend img').getAttribute('src'),`/assets/agents/${agent}.svg`);
+   const command=await resumeOf(page,`${agent}:native`);
+   assert.ok(command?.includes(`${agent} ${agent==='hermes'?'--resume':'--session'} '${agent}-id'`),command);
+   await filterAgent(page,'all');
+   assert.equal(await page.locator('#side .srow').count(),3,'clearing the filter restores all new providers');
+  }
+  for (const quality of ['mid','high']) {
+   await page.click(`#qualSeg [data-v=${quality}]`);
+   await page.waitForFunction(q=>officeKind.startsWith(q)&&office.framesShown>4&&(q!=='high'||office.loaded),quality);
+   await settleOfficeRoster(page,addedClients.map(s=>s.key),`Pi, OpenCode and Hermes in ${quality}`);
+   assert.deepEqual(await drawnLogos(page),['hermes','opencode','pi']);
+  }
+  for (const scene of ['christmas','arcade']) {
+   const image=await page.request.get(`${base}/assets/scene-icons/${scene}.png`);
+   assert.equal(image.status(),200);
+   assert.match(image.headers()['content-type'],/^image\/png/);
+   assert.match(await page.evaluate(id=>sceneIcon(id),scene),new RegExp(`/assets/scene-icons/${scene}\\.png`));
+  }
+  check('Pi, OpenCode and Hermes retain filters, Resume and both office logos; new scene icons load');
   await page.evaluate(s=>onData({now:Date.now(),sessions:s}),nativeClients);
   check('Antigravity CLI sessions show their logo, subagents and agy --conversation resume command');
   for (const colorScheme of ['light','dark']) {

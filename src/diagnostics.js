@@ -159,7 +159,8 @@ function statusKind(agent, d) {
         default: return 'status_event';
       }
     }
-    case 'omp': {
+    case 'omp':
+    case 'pi': {
       if (d.type === 'custom') {
         if (d.customType === 'tool_execution_start') return 'tool_call';
         if (d.customType === 'session_exit') {
@@ -207,7 +208,7 @@ function statusEventTime(agent, d) {
   if (!d || typeof d !== 'object') return null;
   if (agent === 'kimi' || agent === 'dsh') return eventTime(d.time);
   if (agent === 'grok') return eventTime(d.timestamp, typeof d.timestamp === 'number' ? 1000 : 1);
-  if (agent === 'omp') {
+  if (agent === 'omp' || agent === 'pi') {
     const customTime = d.customType === 'tool_execution_start' ? d.data?.startedAt
       : d.customType === 'session_exit' ? d.data?.recordedAt : null;
     return eventTime(d.timestamp || d.message?.timestamp || customTime);

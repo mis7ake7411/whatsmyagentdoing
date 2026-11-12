@@ -2,7 +2,7 @@
 
 # whatsmyagentdoing
 
-**A Claude Code / Codex skill: type `/myoffice` and see what every Claude Code, Codex, Gemini CLI, Antigravity CLI, Copilot CLI, OMP (oh-my-pi), Kimi Code, DeepSeek Harness and Grok Build agent on your machine is doing — live, in a little office.**
+**A Claude Code / Codex skill: type `/myoffice` and see what every Claude Code, Codex, Gemini CLI, Antigravity CLI, Copilot CLI, OMP (oh-my-pi), Pi, Kimi Code, DeepSeek Harness, Grok Build, OpenCode and Hermes agent on your machine is doing — live, in a little office.**
 
 **Website:** https://charonyuu.github.io/whatsmyagentdoing/
 
@@ -40,7 +40,7 @@ It opens an isometric **office**. Agents that are working sit at cubicle desks: 
 
 Two looks: **Medium** is a hand-drawn 2D canvas (zero dependencies). **High (3D)** renders the same office with real-time lighting and shadows using [Kenney](https://kenney.nl)'s CC0 *Mini Characters* (with their walk / sit / interact animations) and *Furniture Kit*; drag to rotate, scroll to zoom. The 3D bundle (three.js, ~180 KB gzipped) and models (~1.3 MB, meshopt-compressed) only load when you pick High.
 
-**Scenes (3D):** the office is built in; other scenes are small downloadable packs (Haunted Hollow, Pirate Cove, Café, Space Station and Castle are 100–230 KB each), fetched only when you pick one from the scene menu next to 2D/3D, run `--scene pirate`, or ask your agent for it. Packs are data only (a manifest plus Kenney CC0 models) and are checked against a pinned SHA-256 before they're installed into `~/.whatsmyagentdoing/scenes`.
+**Scenes (3D):** the office is built in; other scenes are small downloadable packs (Christmas Cabin, Neon Arcade, Haunted Hollow, Pirate Cove, Café, Space Station and Castle are about 100–290 KB each), fetched only when you pick one from the scene menu next to 2D/3D, run `--scene pirate`, or ask your agent for it. Packs are data only (a manifest plus Kenney CC0 models) and are checked against a pinned SHA-256 before they're installed into `~/.whatsmyagentdoing/scenes`.
 
 Each session updates in real time:
 
@@ -77,8 +77,8 @@ In the interactive pop-out, connection status and relative update time stay visi
 When Document PiP isn't available, **Pop out** in office view starts a local, view-only video preview of the 2D or 3D office. Use its video PiP button, or the browser's own video controls/context menu (such as Firefox's), to float it. Stop the preview when finished. No screen-sharing permission is needed and no video is uploaded. Background animation may run at a lower frame rate, depending on browser throttling; this fallback doesn't support list cards or clicking agents.
 
 Works with Claude Code (CLI, desktop, IDE), Codex (CLI, desktop, IDE), Gemini CLI, Antigravity CLI,
-Copilot CLI, OMP, Kimi Code, DeepSeek Harness (DSH) and Grok Build through their local session
-logs. (The Google Antigravity desktop app keeps its conversations in an undocumented binary
+Copilot CLI, OMP, Pi, Kimi Code, DeepSeek Harness (DSH), Grok Build, OpenCode and Hermes through their
+local session stores. (The Google Antigravity desktop app keeps its conversations in an undocumented binary
 store and isn't supported yet; its `agy` CLI is.)
 
 ## Options
@@ -116,6 +116,9 @@ No hooks, no config, no API keys. Both tools already append every message and to
 - DSH: `~/.dsh/sessions/<project>/<session>/session[.vN].jsonl[.zstd]`; only the latest format in a session folder is read
 - Grok Build: `~/.grok/sessions/<project>/<session>/updates.jsonl`, with metadata from `summary.json`
 - OMP: `~/.omp/agent/sessions/<project>/*.jsonl`, plus named profiles. Override with `WMAD_OMP_SESSIONS_DIR` or `--omp-dir`. Details: [OMP](docs/omp.md).
+- Pi: `~/.pi/agent/sessions/<project>/*.jsonl`. Override with `PI_CODING_AGENT_SESSION_DIR` or `PI_CODING_AGENT_DIR`; Resume uses `pi --session`.
+- OpenCode: `~/.local/share/opencode/opencode.db`, sessions and messages from its `session` / `message` / `part` tables. Override with `OPENCODE_DB`.
+- Hermes: `%LOCALAPPDATA%\hermes\state.db`, sessions and messages from its `sessions` / `messages` tables. Override with `HERMES_HOME`.
 
 `whatsmyagentdoing` tails those files (read-only), turns the latest event into a status, and pushes it to the page over Server-Sent Events. Set `CLAUDE_CONFIG_DIR` / `CODEX_HOME` / `GEMINI_CLI_HOME` if yours live elsewhere.
 
@@ -126,6 +129,12 @@ Grok subagent sessions use the existing subagent filter. These clients use
 locally bundled Magpie icons in the existing badge positions, with initials
 as a loading fallback. Resume buttons use `kimi --session`,
 `dsh tui --resume` and `grok --resume`, respectively.
+
+OpenCode and Hermes keep every session in one SQLite database instead of a log
+file per session, so they are read through Node's built-in `node:sqlite` (22.13
+and newer) rather than tailed. A Node without it simply leaves these two agents
+out. Both databases are opened read-only, and Resume buttons use
+`opencode --session` and `hermes --resume`.
 
 The office legend follows the current sessions and client/subagent filters:
 clients appear when present and disappear when no matching sessions remain.
@@ -242,7 +251,8 @@ the source unhealthy even while other sessions remain readable. A successful
 content read does not necessarily mean parsing succeeded. A malformed-record
 warning clears after a later clean read of that file or when it leaves the
 discovered set; intentionally incomplete JSONL tails are not parse failures.
-Read failures retain the last readable session while retrying. Magpie source
+Read failures retain the last readable session while retrying. Pi shares the
+file-source diagnostics used by OMP. Magpie, OpenCode and Hermes source
 diagnostics are currently unavailable, and unsupported event details use a
 generic state-event label or no evidence rather than guessing.
 
@@ -270,11 +280,12 @@ node --test tests/status.test.js tests/status-ui.test.js
 - Logs are written per finished block, not per token, so "Writing reply" means a reply block has landed and the turn isn't over — not a live keystroke stream.
 - Claude Code doesn't log permission prompts, so a tool waiting on your approval shows as "Running" until you answer (Codex and Gemini CLI do log it, so those show "Waiting for you"). Run `node bin/cli.js --install-hook` once to add an optional Notification hook to your Claude Code settings: on a permission or question prompt it writes a small marker to `~/.whatsmyagentdoing/waiting`, and the session shows "Waiting for you" until its log moves on. New Claude Code sessions pick it up; `--uninstall-hook` removes it. If you switch Node versions, run `--install-hook` again.
 - Gemini CLI writes its thoughts together with the reply, so between your prompt and its first tool call or reply it simply shows "Thinking".
+- OpenCode and Hermes keep their sessions in SQLite, which is read through Node's built-in `node:sqlite` (Node.js 22.13 and newer). On an older Node those two agents are skipped — the rest of the dashboard is unaffected — and the CLI prints a line saying so at startup.
 - The log formats aren't public APIs. If an update changes them, statuses may degrade — please open an issue.
 
 ## Development checks
 
-Run `npm ci` from the repository root to install the locked development dependencies. With Node.js 20+ and Google Chrome installed, `npm test` runs all Node regression tests followed by the browser checks. The dashboard's runtime requirement remains Node.js 18+.
+Run `npm ci` from the repository root to install the locked development dependencies. With Node.js 22.13+ and Google Chrome installed, `npm test` runs all Node regression tests, including the OpenCode and Hermes SQLite fixtures, followed by the browser checks. Older Node versions skip the SQLite-dependent cases. The dashboard's runtime requirement remains Node.js 18+.
 
 `npm run test:unit` runs the server, custom status, UI status helpers, watcher and OMP tests without opening a browser. `npm run test:server` checks malformed URLs, file read failures and resource access boundaries. The existing `test:watcher` and `test:ui` commands remain available for focused checks.
 

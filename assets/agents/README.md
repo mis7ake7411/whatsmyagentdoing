@@ -1,7 +1,10 @@
 # Provider icons
 
 `omp.svg` is a neutral OMP monogram made for this interface. It is not an
-official oh-my-pi logo and contains no external resources.
+official oh-my-pi logo and contains no external resources. `opencode.svg` and
+`hermes.svg` are likewise neutral marks drawn for this interface — a terminal
+prompt and an H in a ring. Neither reproduces an official OpenCode or Hermes
+logo, and neither contains external resources.
 
 These official product icons identify the providers of sessions. They are served
 locally so offline use and canvas/video capture do not depend on a third party.
@@ -40,3 +43,5 @@ in `MAGPIE-LICENSE`; trademark ownership remains with the respective brands.
 Monochrome Kimi and xAI marks retain their transparent backgrounds. The UI
 displays them in black on light themes and white on dark themes; the SVG
 geometry is not modified.
+- `pi.svg`: the Pi mark, retrieved 2026-11-06 from
+  https://github.com/earendil-works/pi/blob/main/apps/p2/public/icons/favicon.svg (MIT repository).

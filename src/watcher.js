@@ -13,7 +13,8 @@ const crypto = require('crypto');
 const { newSession, applyClaude, applyCodex, applyGemini, applyGeminiDocument, applyCopilot, applyOMP, applyAntigravity } = require('./parsers');
 const { Magpie } = require('./magpie');
 const { clientFiles, metadata, applyKimi, applyDsh, applyGrok, readDsh } = require('./clients');
-const { ompDirs } = require('./omp');
+const external = require('./external');
+const { ompDirs, piDirs } = require('./omp');
 const hook = require('./hook');
 const { transcript } = require('./transcript');
 const { SOURCE_STATES, SOURCE_REASONS, errorReason, safeSourceHealth } = require('./diagnostics');
@@ -22,9 +23,12 @@ const HEAD_BYTES = 128 * 1024;
 const TAIL_BYTES = 768 * 1024;
 // OMP, Kimi and Grok logs are replayed whole up to this size, then read head + tail like the others.
 const OMP_FULL_BYTES = 32 * 1024 * 1024;
+// Pi writes the logs OMP does, so both take the same path through the watcher.
+const OMP_LIKE = new Set(['omp', 'pi']);
 // DSH logs are decoded and replayed whole, so a busy log is re-read at most this often.
 const DSH_REPLAY_MS = 5000;
-const LOCAL_AGENTS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp', 'antigravity'];
+const LOCAL_AGENTS = ['claude', 'codex', 'gemini', 'copilot', 'kimi', 'dsh', 'grok', 'omp', 'antigravity', 'pi'];
+const EXTERNAL_AGENTS = ['opencode', 'hermes'];
 
 const home = os.homedir();
 const CLAUDE_DIR = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects');
@@ -199,7 +203,7 @@ function pbtxtString(raw) {
   return Buffer.concat(out).toString('utf8');
 }
 
-function ompFiles(sinceMs, roots, onDirectory) {
+function ompFiles(sinceMs, roots, onDirectory, agent = 'omp') {
   const out = [], seen = new Set();
   const add = (dir, profile, parentFile = null, depth = 0) => {
     if (depth > 20) return;
@@ -215,7 +219,7 @@ function ompFiles(sinceMs, roots, onDirectory) {
       const fresh = st.mtimeMs >= sinceMs;
       if (fresh && !seen.has(file)) {
         seen.add(file);
-        out.push({ agent: 'omp', file, id: null, profile, parentFile });
+        out.push({ agent, file, id: null, profile, parentFile });
       }
       const stem = e.name.slice(0, -6);
       if (!dirs.has(stem)) continue;
@@ -236,7 +240,7 @@ function ompFiles(sinceMs, roots, onDirectory) {
   return out;
 }
 
-function sourceRoots(ompRoots) {
+function sourceRoots(ompRoots, piRoots = []) {
   return {
     claude: [CLAUDE_DIR],
     codex: [CODEX_DIR],
@@ -247,6 +251,7 @@ function sourceRoots(ompRoots) {
     grok: [CLIENT_DIRS.grok],
     omp: ompRoots.map((root) => root.dir),
     antigravity: [ANTIGRAVITY_DIR],
+    pi: piRoots.map((root) => root.dir),
   };
 }
 
@@ -334,6 +339,9 @@ class Watcher extends EventEmitter {
     this.antigravityWorkspaces = new Map();
     this.antigravityHistoryMtime = 0;
     this.antigravityTitles = new Map();
+    // opencode and hermes sessions, refreshed from their databases on each scan.
+    this.external = [];
+    this.externalKey = '';
   }
 
   recordSourceError(file, agent, state, reason) {
@@ -359,6 +367,9 @@ class Watcher extends EventEmitter {
   }
 
   sourceHealth(agent) {
+    if (EXTERNAL_AGENTS.includes(agent)) {
+      return safeSourceHealth({ state: 'unavailable', lastSuccessAt: null, reason: 'not_instrumented' });
+    }
     if (!LOCAL_AGENTS.includes(agent)) return null;
     const source = this.sourceScan.agents.get(agent);
     let readReason = source?.errorReason || null;
@@ -380,6 +391,7 @@ class Watcher extends EventEmitter {
   sources() {
     const out = LOCAL_AGENTS.map((agent) => ({ agent, ...this.sourceHealth(agent) }));
     if (this.magpies.length) out.push({ agent: 'magpie', state: 'unavailable', lastSuccessAt: null, reason: 'not_instrumented' });
+    for (const agent of EXTERNAL_AGENTS) out.push({ agent, ...this.sourceHealth(agent) });
     return out;
   }
 
@@ -461,6 +473,18 @@ class Watcher extends EventEmitter {
     return true;
   }
 
+  // opencode and hermes have no per-session file to tail, so their whole
+  // listing is rebuilt here and every row is compared to the last one.
+  loadExternal(since) {
+    let rows;
+    try { rows = external.poll(since, { home, env: process.env }); } catch { return false; }
+    const key = rows.map((s) => `${s.agent}:${s.id}:${s.status}:${s.lastEventAt}`).join('|');
+    if (key === this.externalKey) return false;
+    this.externalKey = key;
+    this.external = rows;
+    return true;
+  }
+
   tick() {
     const now = Date.now();
     const since = now - this.windowMs;
@@ -476,12 +500,15 @@ class Watcher extends EventEmitter {
       const ompErrors = [];
       const ompRoots = ompDirs(this.ompDir, process.env, home, process.platform,
         (directory, error) => ompErrors.push({ directory, error }));
-      const scan = createSourceScan(sourceRoots(ompRoots));
+      // PI_CODING_AGENT_DIR can point both at one directory; its logs stay OMP's then.
+      const piRoots = piDirs(process.env, home).filter((r) => !ompRoots.some((o) => path.resolve(o.dir) === path.resolve(r.dir)));
+      const scan = createSourceScan(sourceRoots(ompRoots, piRoots));
       for (const item of ompErrors) scan.observe('omp', item.directory, item.error);
       this.candidates = [...claudeFiles(scan.forAgent('claude'), since), ...codexFiles(since, scan.forAgent('codex')),
         ...geminiFiles(scan.forAgent('gemini'), since), ...copilotFiles(scan.forAgent('copilot'), since),
         ...clientFiles(CLIENT_DIRS, since, scan.forClientPath),
         ...ompFiles(since, ompRoots, scan.forAgent('omp')),
+        ...ompFiles(since, piRoots, scan.forAgent('pi'), 'pi'),
         ...antigravityFiles(since, scan.forAgent('antigravity'))];
       for (const candidate of this.candidates) {
         const source = scan.agents.get(candidate.agent);
@@ -491,6 +518,8 @@ class Watcher extends EventEmitter {
       const currentFiles = new Set(this.candidates.map((candidate) => candidate.file));
       for (const file of this.sourceFileErrors.keys()) if (!currentFiles.has(file)) this.sourceFileErrors.delete(file);
       for (const file of this.failed.keys()) if (!currentFiles.has(file)) this.failed.delete(file);
+      // These have no file to tail, so they refresh with the walk.
+      if (this.loadExternal(since)) changed = true;
     }
 
     for (const c of this.candidates) {
@@ -524,7 +553,7 @@ class Watcher extends EventEmitter {
     }
 
     for (const [file, t] of this.trackers) {
-      const activity = t.session.agent === 'omp' ? Math.max(t.session.lastEventAt || 0, t.session.mtime || 0) : (t.session.lastEventAt || t.session.mtime || 0);
+      const activity = OMP_LIKE.has(t.session.agent) ? Math.max(t.session.lastEventAt || 0, t.session.mtime || 0) : (t.session.lastEventAt || t.session.mtime || 0);
       if (activity < since) { this.trackers.delete(file); changed = true; }
     }
 
@@ -540,7 +569,7 @@ class Watcher extends EventEmitter {
       }
     });
     const t = this.trackers.get(c.file);
-    if (!st) return c.agent === 'omp' && this.trackers.delete(c.file);
+    if (!st) return OMP_LIKE.has(c.agent) && this.trackers.delete(c.file);
     if (!t) {
       if (st.mtimeMs < since) return false;
       this.open(c, st);
@@ -552,7 +581,7 @@ class Watcher extends EventEmitter {
       this.open(c, st);
       return true;
     }
-    if (c.agent === 'omp') {
+    if (OMP_LIKE.has(c.agent)) {
       // The title slot is rewritten in place, sometimes without changing the size.
       const modified = st.mtimeMs !== t.mtime || st.ctimeMs !== t.ctime || st.ino !== t.ino;
       if (st.size < t.offset || (modified && st.size === t.offset) || st.ino !== t.ino) {
@@ -618,7 +647,7 @@ class Watcher extends EventEmitter {
     if (c.parentId) { session.parentId = c.parentId; session.subagent = true; }
     session.mtime = st.mtimeMs;
     if (c.agent === 'gemini') session.geminiProject = c.project;
-    const apply = { claude: applyClaude, codex: applyCodex, gemini: applyGemini, copilot: applyCopilot, kimi: applyKimi, dsh: applyDsh, grok: applyGrok, omp: applyOMP, antigravity: applyAntigravity }[c.agent];
+    const apply = { claude: applyClaude, codex: applyCodex, gemini: applyGemini, copilot: applyCopilot, kimi: applyKimi, dsh: applyDsh, grok: applyGrok, omp: applyOMP, pi: applyOMP, antigravity: applyAntigravity }[c.agent];
     const t = { session, offset: st.size, partial: '', apply, mtime: st.mtimeMs,
       ctime: st.ctimeMs, ino: st.ino, agent: c.agent, file: c.file };
     if (c.agent === 'dsh') {
@@ -642,7 +671,7 @@ class Watcher extends EventEmitter {
       this.trackers.set(c.file, t);
       return t;
     }
-    if (c.agent === 'omp') {
+    if (OMP_LIKE.has(c.agent)) {
       session.ompProfile = c.profile;
       if (c.parentFile) {
         session.subagent = true;
@@ -820,7 +849,7 @@ class Watcher extends EventEmitter {
     const out = [];
     for (const t of this.trackers.values()) {
       const s = t.session;
-      if (s.agent === 'omp') {
+      if (OMP_LIKE.has(s.agent)) {
         // Skip stray JSONL files and logs whose header isn't written yet.
         if (!s.sessionId || !s.cwd) continue;
         if (s.subagent && s.ompParentFile) {
@@ -860,6 +889,25 @@ class Watcher extends EventEmitter {
       }
       out.push(s);
     }
+    // Copied histories (see applyClaude's _rootUuid) are one conversation:
+    // show the copy that was active most recently and hide the rest.
+    const newestByRoot = new Map();
+    for (const s of out) {
+      if (s.agent !== 'claude' || s.subagent || !s._rootUuid) continue;
+      const prev = newestByRoot.get(s._rootUuid);
+      if (!prev || (s.lastEventAt || 0) > (prev.lastEventAt || 0)
+        || ((s.lastEventAt || 0) === (prev.lastEventAt || 0) && (s.mtime || 0) > (prev.mtime || 0))) {
+        newestByRoot.set(s._rootUuid, s);
+      }
+    }
+    if (newestByRoot.size) {
+      const kept = new Set(newestByRoot.values());
+      for (let i = out.length - 1; i >= 0; i--) {
+        const s = out[i];
+        if (s.agent === 'claude' && !s.subagent && s._rootUuid && !kept.has(s)) out.splice(i, 1);
+      }
+    }
+    out.push(...this.external);
     if (!this.magpies.length) return out;
     const remote = new Map();
     // Magpie's native records carry richer metadata than gateway projections.
